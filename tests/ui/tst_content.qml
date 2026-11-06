@@ -14,13 +14,14 @@ Item {
         color: Color.popups.background
         Ui.PanelKeyCatcher {
             id: keys
+            blocked: content.editing
             Keys.forwardTo: [content]
             anchors.fill: parent
             anchors.margins: 24
             onMoveRequested: function(dx, dy) { content.move(dx, dy) }
             onActivateRequested: content.activate()
             onTabRequested: function(direction) { content.move(0, direction) }
-            onTextKey: function(text) { if (text.toLowerCase() === "r") content.refreshRequested() }
+            onTextKey: function(text) { content.textKey(text) }
             Plugin.PrContent {
                 id: content
                 anchors.fill: parent
@@ -32,6 +33,7 @@ Item {
     SignalSpy { id: closed; target: keys; signalName: "closeRequested" }
     SignalSpy { id: refreshed; target: content; signalName: "refreshRequested" }
     SignalSpy { id: copied; target: content; signalName: "copyRequested" }
+    SignalSpy { id: configured; target: content; signalName: "configRequested" }
 
     TestCase {
         name: "PrContent"
@@ -163,12 +165,254 @@ Item {
             }
         }
         function init() {
-            opened.clear(); closed.clear(); refreshed.clear(); copied.clear()
+            opened.clear(); closed.clear(); refreshed.clear(); copied.clear(); configured.clear()
             content.copyBusy = false; content.copyFeedback = ""
             content.expandedId = ""; content.selectedId = ""
+            content.cancelGroupEditor()
+            content.rowEditingId = ""
+            content.pane = "inbox"
             content.snapshot = example()
             keys.forceActiveFocus()
             wait(100)
+        }
+
+        function test_landing_steps_and_workaround() {
+            let data = example()
+            Object.assign(data.prs[0], { kind: "tracked", status: "Awaiting file > 5.48", review: "Awaiting file > 5.48",
+                landing: { landed: false, workaround: "the -S wrapper", note: "Found while debugging a terminal crash",
+                    steps: [ { kind: "github", label: "Closed · not merged", done: true },
+                             { kind: "package", label: "file > 5.48 · installed 5.48-1", done: false } ] } })
+            content.snapshot = data
+            wait(100)
+            let list = findChild(content, "prList")
+            compare(findChild(list.itemAtIndex(0), "prStatusText").text, "Awaiting file > 5.48")
+            compare(findChild(list.itemAtIndex(0), "landingSteps").text, "✓ #" + data.prs[0].number + " closed · not merged   →   ○ file > 5.48 · installed 5.48-1")
+            compare(findChild(list.itemAtIndex(0), "landingWorkaround").text, "Workaround in place: the -S wrapper")
+            verify(findChild(list.itemAtIndex(0), "landingNote").visible)
+            verify(!findChild(list.itemAtIndex(1), "landingSteps").visible)
+            compare(findChild(list.itemAtIndex(0), "followStatus").text, "No status yet")
+            compare(findChild(list.itemAtIndex(0), "originSession").text, "o  start agent session")
+            verify(!findChild(list.itemAtIndex(1), "originSession").visible)
+            configured.clear()
+            content.textKey("s")
+            content.textKey("o")
+            compare(configured.count, 2)
+            compare(configured.signalArguments[0][0], "--ask-status")
+            compare(configured.signalArguments[1][0], "--open-session")
+            compare(configured.signalArguments[1][1], data.prs[0].url)
+            data = JSON.parse(JSON.stringify(data))
+            data.prs[0].landing.status = { text: "Committed upstream; waiting for 5.49", at: new Date().toISOString().slice(0, 19) + "Z", by: "claude" }
+            data.prs[0].landing.sessions = [ { agent: "codex", id: "019a", host: "studio-mac", cwd: "/Users/me/src", at: "2026-10-01T10:00:00Z" } ]
+            content.snapshot = data
+            wait(100)
+            compare(findChild(list.itemAtIndex(0), "followStatus").text, "Committed upstream; waiting for 5.49  ·  claude, 0m ago")
+            compare(findChild(list.itemAtIndex(0), "originSession").text, "o  resume codex on studio-mac  ·  /Users/me/src")
+            data.prs[0].landing.status.by = "checking"
+            content.snapshot = JSON.parse(JSON.stringify(data))
+            wait(100)
+            configured.clear()
+            content.textKey("s")
+            compare(configured.count, 0)
+            compare(findChild(list.itemAtIndex(0), "askStatus").text, "checking…")
+            compare(findChild(list.itemAtIndex(0), "followStatus").text, "Agent is checking…  ·  was: Committed upstream; waiting for 5.49")
+            compare(findChild(list.itemAtIndex(0), "watchAction").text, "w  watch")
+            data.prs[0].landing.status.activity = "$ gh pr view 178"
+            content.snapshot = JSON.parse(JSON.stringify(data))
+            wait(100)
+            compare(findChild(list.itemAtIndex(0), "followStatus").text, "Agent is checking…  ·  → $ gh pr view 178")
+            content.textKey("w")
+            compare(configured.count, 1)
+            compare(configured.signalArguments[0][0], "--watch-status")
+            delete data.prs[0].landing.status.activity
+            data = JSON.parse(JSON.stringify(data))
+            Object.assign(data.prs[0], { status: "Landed", review: "Landed" })
+            data.prs[0].landing.landed = true
+            content.snapshot = data
+            wait(100)
+            verify(list.itemAtIndex(0).completed)
+            compare(findChild(list.itemAtIndex(0), "landingWorkaround").text, "You can now drop: the -S wrapper")
+        }
+        function test_named_groups_and_individual_assignment() {
+            let data = example()
+            data.groups = [
+                { id: "inbox", name: "Active", count: true, items: [], repositories: [], owners: [] },
+                { id: "later", name: "Later", count: false, items: [], repositories: [], owners: [] }
+            ]
+            let later = data.prs.splice(1, 1)[0]
+            later.group = "later"
+            data.excluded = [later]
+            for (let item of data.prs) item.group = "inbox"
+            content.snapshot = data
+            content.textKey("2")
+            wait(100)
+            let list = findChild(content, "prList")
+            compare(content.pane, "later")
+            compare(list.count, 1)
+            let moveAction = findChild(list.itemAtIndex(0), "moveAction")
+            mouseClick(moveAction)
+            compare(opened.count, 0)
+            let assignment = findChild(list.itemAtIndex(0), "assignmentPopup")
+            tryCompare(assignment, "opened", true)
+            mouseClick(findChild(assignment.contentItem, "destination-inbox"))
+            compare(configured.count, 1)
+            compare(configured.signalArguments[0][0], "--move-item")
+            compare(configured.signalArguments[0][1][0], "inbox")
+            tryCompare(findChild(list.itemAtIndex(0), "assignmentPopup"), "opened", false)
+        }
+
+        function test_group_menu_holds_count_setting_and_delete_confirmation() {
+            let data = example()
+            data.groups = [
+                { id: "inbox", name: "Active", count: true, items: [], repositories: [], owners: [] },
+                { id: "later", name: "Later", count: false, items: [], repositories: [], owners: [] }
+            ]
+            content.snapshot = data
+            wait(100)
+            let laterTab = findChild(content, "groupTab-later")
+            mouseClick(laterTab, laterTab.width / 2, laterTab.height / 2, Qt.RightButton)
+            let menu = findChild(content, "groupMenu")
+            tryCompare(menu, "opened", true)
+            mouseClick(findChild(menu.contentItem, "countGroupAction"))
+            compare(configured.count, 1)
+            compare(configured.signalArguments[0][0], "--group-count")
+            compare(configured.signalArguments[0][1][0], "later")
+            compare(configured.signalArguments[0][1][1], "true")
+            tryCompare(menu, "opened", false)
+            content.menuGroup = data.groups[1]
+            menu.open()
+            tryCompare(menu, "opened", true)
+            verify(findChild(menu.contentItem, "deleteGroupAction").visible)
+            content.confirmingDelete = true
+            verify(content.confirmingDelete)
+            compare(configured.count, 1)
+            menu.close()
+        }
+
+        function test_group_name_editor_blocks_panel_shortcuts() {
+            let data = example()
+            data.groups = [
+                { id: "inbox", name: "Active", count: true, items: [], repositories: [], owners: [] },
+                { id: "later", name: "Later", count: false, items: [], repositories: [], owners: [] }
+            ]
+            content.snapshot = data
+            wait(100)
+            let add = findChild(content, "addGroupTab")
+            mouseClick(add)
+            tryCompare(content, "addingGroup", true)
+            let field = findChild(content, "groupName")
+            tryVerify(function() { return field.activeFocus })
+            keyClick(Qt.Key_R); keyClick(Qt.Key_K); keyClick(Qt.Key_X); keyClick(Qt.Key_1)
+            keyClick(Qt.Key_Space)
+            keyClick(Qt.Key_D); keyClick(Qt.Key_R); keyClick(Qt.Key_A); keyClick(Qt.Key_F); keyClick(Qt.Key_T)
+            compare(field.text, "rkx1 draft")
+            compare(refreshed.count, 0)
+            compare(opened.count, 0)
+            compare(configured.count, 0)
+            compare(content.pane, "inbox")
+            keyClick(Qt.Key_Return)
+            compare(configured.count, 1)
+            compare(configured.signalArguments[0][0], "--create-group")
+            compare(configured.signalArguments[0][1], "rkx1 draft")
+            content.configFinished("--create-group", true, "")
+            verify(!content.addingGroup)
+        }
+
+        function test_new_group_editor_escape_cancels_without_closing_panel() {
+            content.snapshot = Object.assign(example(), { groups: [{ id: "inbox", name: "Active", count: true }] })
+            wait(100)
+            mouseClick(findChild(content, "addGroupTab"))
+            tryCompare(content, "addingGroup", true)
+            keyClick(Qt.Key_L); keyClick(Qt.Key_A); keyClick(Qt.Key_T); keyClick(Qt.Key_E); keyClick(Qt.Key_R)
+            keyClick(Qt.Key_Escape)
+            tryCompare(content, "addingGroup", false)
+            compare(findChild(content, "groupName").text, "")
+            compare(configured.count, 0)
+            compare(closed.count, 0)
+        }
+
+        function test_drag_onto_group_tab_and_new_group() {
+            let data = example()
+            data.groups = [{ id: "inbox", name: "Active", count: true }, { id: "excluded", name: "Excluded", count: false }]
+            content.snapshot = data
+            wait(100)
+            let list = findChild(content, "prList")
+            function dragTo(target) {
+                let handle = findChild(list.itemAtIndex(1), "moveAction")
+                let end = target.mapToItem(handle, target.width / 2, target.height / 2)
+                mousePress(handle, handle.width / 2, handle.height / 2)
+                for (let step = 1; step <= 10; step++)
+                    mouseMove(handle, handle.width / 2 + (end.x - handle.width / 2) * step / 10, handle.height / 2 + (end.y - handle.height / 2) * step / 10)
+                mouseRelease(handle, end.x, end.y)
+            }
+            dragTo(findChild(content, "groupTab-excluded"))
+            compare(configured.count, 1)
+            compare(configured.signalArguments[0][0], "--move-item")
+            compare(configured.signalArguments[0][1], ["excluded", "https://github.com/example/omarchy-tools/pull/41"])
+            dragTo(findChild(content, "groupTab-inbox"))
+            compare(configured.count, 1)
+            dragTo(findChild(content, "addGroupTab"))
+            verify(content.addingGroup)
+            compare(content.pendingDropUrl, "https://github.com/example/omarchy-tools/pull/41")
+            compare(findChild(content, "groupName").placeholderText, "Name group for dropped item")
+            content.cancelGroupEditor()
+        }
+
+        function test_exclude_item_button_and_keys() {
+            let data = example()
+            data.groups = [{ id: "inbox", name: "Active", count: true }, { id: "excluded", name: "Excluded", count: false }]
+            content.snapshot = data
+            wait(100)
+            let list = findChild(content, "prList")
+            mouseClick(findChild(list.itemAtIndex(1), "excludeAction"))
+            compare(configured.signalArguments[0][0], "--move-item")
+            compare(configured.signalArguments[0][1], ["excluded", "https://github.com/example/omarchy-tools/pull/41"])
+            keyClick(Qt.Key_X)
+            compare(configured.signalArguments[1][0], "--move-item")
+            compare(configured.signalArguments[1][1], ["excluded", "https://github.com/example/omarchy-tools/pull/42"])
+            keyClick(Qt.Key_X, Qt.ShiftModifier)
+            compare(configured.signalArguments[2][0], "--move-repository")
+            compare(configured.signalArguments[2][1], ["excluded", "example/omarchy-tools"])
+            data = JSON.parse(JSON.stringify(data))
+            for (let pr of data.prs) pr.group = "excluded"
+            content.snapshot = data
+            content.pane = "excluded"
+            wait(100)
+            compare(findChild(list.itemAtIndex(0), "excludeAction").text, "↩")
+            keyClick(Qt.Key_X)
+            compare(configured.signalArguments[3][1], ["inbox", "https://github.com/example/omarchy-tools/pull/42"])
+        }
+
+        function test_group_editor_validation_failure_and_drop_cancel() {
+            content.snapshot = Object.assign(example(), { groups: [
+                { id: "inbox", name: "Active", count: true },
+                { id: "later", name: "Later", count: false }
+            ] })
+            content.addingGroup = true
+            content.createNamedGroup(" later ")
+            compare(configured.count, 0)
+            compare(content.groupError, "That group already exists.")
+            content.createNamedGroup("Needs review")
+            compare(configured.count, 1)
+            content.configFinished("--create-group", false, "Name rejected")
+            verify(content.addingGroup)
+            compare(content.groupError, "Name rejected")
+            content.pendingDropUrl = "https://github.com/example/omarchy-tools/pull/42"
+            content.cancelGroupEditor()
+            compare(content.pendingDropUrl, "")
+            compare(findChild(content, "groupName").text, "")
+        }
+
+        function test_move_and_new_group_shortcuts() {
+            content.snapshot = Object.assign(example(), { groups: [{ id: "inbox", name: "Active", count: true }] })
+            wait(100)
+            content.textKey("m")
+            let popup = findChild(findChild(content, "prList").itemAtIndex(0), "assignmentPopup")
+            tryCompare(popup, "opened", true)
+            compare(opened.count, 0)
+            popup.close()
+            content.textKey("n")
+            tryCompare(content, "addingGroup", true)
+            content.cancelGroupEditor()
         }
 
         function test_navigation_and_expand() {
@@ -185,6 +429,49 @@ Item {
             content.move(0, -1)
             content.activate()
             compare(opened.signalArguments[2][0], "https://github.com/example/omarchy-tools/pull/39")
+        }
+        function test_open_rows_can_be_summarized_and_discussed() {
+            let data = example()
+            content.snapshot = data
+            wait(100)
+            let list = findChild(content, "prList")
+            verify(!findChild(list.itemAtIndex(0), "followActions").visible)
+            content.textKey("s")
+            content.textKey("o")
+            compare(configured.count, 2)
+            compare(configured.signalArguments[0][0], "--ask-status")
+            compare(configured.signalArguments[1][0], "--open-session")
+            data = JSON.parse(JSON.stringify(data))
+            data.prs[0].followUp = { status: { text: "Waiting for review; checks green", at: "2026-10-22T08:00:00Z", by: "claude" }, sessions: [] }
+            content.snapshot = data
+            wait(100)
+            verify(findChild(list.itemAtIndex(0), "followActions").visible)
+            compare(findChild(list.itemAtIndex(0), "originSession").text, "o  discuss with an agent")
+            verify(!findChild(list.itemAtIndex(1), "followActions").visible)
+            data = JSON.parse(JSON.stringify(data))
+            Object.assign(data.prs[0].followUp.status, { waiting: "me", outdated: true, at: new Date().toISOString().slice(0, 19) + "Z" })
+            content.snapshot = data
+            wait(100)
+            compare(findChild(list.itemAtIndex(0), "followStatus").text, "Your move  ·  Waiting for review; checks green  ·  claude, 0m ago  ·  outdated")
+        }
+        function test_selection_follows_the_pointer() {
+            content.snapshot = example()
+            wait(100)
+            let list = findChild(content, "prList")
+            compare(list.currentIndex, 0)
+            let second = list.itemAtIndex(1)
+            mouseMove(second, second.width / 2, second.height / 2)
+            tryCompare(list, "currentIndex", 1)
+            compare(content.selectedId, "41")
+            // Keys move the selection; the resting pointer does not take it back.
+            content.move(0, 1)
+            compare(list.currentIndex, 2)
+            mouseMove(second, second.width / 2, second.height / 2)
+            wait(50)
+            compare(list.currentIndex, 2)
+            mouseMove(second, second.width / 2, second.height / 2 + 2)
+            tryCompare(list, "currentIndex", 1)
+            mouseMove(content, 1, 1)
         }
         function test_copy_shortcuts_and_feedback() {
             keyClick(Qt.Key_C, Qt.ControlModifier)
@@ -257,9 +544,25 @@ Item {
             let list = findChild(content, "prList")
             compare(list.currentIndex, 0)
             verify(Math.abs(list.contentY - list.originY) < 1)
-            verify(list.itemAtIndex(0).height > 100)
+            let compactHeight = list.itemAtIndex(0).height
+            verify(compactHeight < 100)
+            list.positionViewAtIndex(3, ListView.Contain)
+            wait(100)
+            verify(list.itemAtIndex(3).height > compactHeight)
             content.snapshot = example()
             wait(100)
+            verify(Math.abs(list.contentY - list.originY) < 1)
+        }
+
+        function test_four_compact_rows_fit_without_scrolling() {
+            let data = example()
+            data.prs.push(row("38", "Fourth contribution", false, "Approved", [], 0, 0))
+            content.snapshot = data
+            wait(100)
+            let list = findChild(content, "prList")
+            let fourth = list.itemAtIndex(3)
+            verify(fourth !== null)
+            verify(fourth.y + fourth.height <= list.height)
             verify(Math.abs(list.contentY - list.originY) < 1)
         }
         function test_keyboard_and_title_click() {

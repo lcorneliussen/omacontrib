@@ -20,11 +20,15 @@ def imports(path):
 
 
 if __name__ == "__main__":
-    lint = shutil.which("qmllint") or "/usr/lib/qt6/bin/qmllint"
+    qt6_lint = Path("/usr/lib/qt6/bin/qmllint")
+    lint = str(qt6_lint) if qt6_lint.exists() else shutil.which("qmllint")
     with tempfile.TemporaryDirectory(prefix="pr-status-qml-") as temporary:
         imports(Path(temporary))
         # The host exposes QObject/var objects whose dynamic properties lint cannot infer.
-        args = [lint, "-I", temporary, "--unqualified", "disable", "--missing-property", "disable"]
+        help_text = subprocess.run([lint, "--help"], capture_output=True, text=True).stdout
+        args = [lint, "-I", temporary]
+        if "--unqualified" in help_text:
+            args += ["--unqualified", "disable", "--missing-property", "disable"]
         args += [str(ROOT / name) for name in ("BarWidget.qml", "Panel.qml", "PrContent.qml", "PrRow.qml")]
         result = subprocess.run(args, capture_output=True, text=True)
         output = result.stdout + result.stderr

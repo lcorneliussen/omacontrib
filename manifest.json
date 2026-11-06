@@ -1,16 +1,15 @@
 {
   "schemaVersion": 1,
-  "id": "torugo.github-pr-status",
-  "name": "GitHub PR Status",
-  "version": "1.2.0",
-  "author": "torugo",
+  "id": "community.omacontrib",
+  "name": "OmaContrib",
+  "version": "0.1.0",
+  "author": "OmaContrib contributors",
   "license": "MIT",
-  "homepage": "https://github.com/victorhsb/omarchy-github-pr-status",
-  "description": "Your open pull requests, checks, reviews, and discussion counts in the Omarchy bar.",
+  "description": "Track external contributions and your Omarchy marketplace submissions through review, release, and distribution.",
   "kinds": ["bar-widget"],
   "entryPoints": { "barWidget": "BarWidget.qml" },
   "barWidget": {
-    "displayName": "GitHub PR Status",
+    "displayName": "OmaContrib",
     "category": "Status",
     "allowMultiple": false,
     "defaultSection": "right"

@@ -1,0 +1,65 @@
+#!/usr/bin/python3
+"""Fictional OmaContrib data shim for visual tests inside OmaBox only."""
+import json
+import os
+import sys
+
+
+def pr(identifier, number, repository, title, review, checks, discussion=0, inline=0, draft=False):
+    counts = dict.fromkeys(("running", "success", "skipped", "failed", "unknown"), 0)
+    for check in checks:
+        counts[check["bucket"]] += 1
+    return {
+        "id": identifier, "number": number, "repository": repository, "title": title,
+        "url": f"https://github.com/{repository}/pull/{number}", "draft": draft,
+        "review": review, "discussion": discussion, "inline": inline, "checks": checks,
+        "counts": counts, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+        "error": None, "fetchedAt": 1790942400, "updatedAt": f"2026-10-02T11:{59-int(identifier):02d}:00Z",
+        "kind": "pull_request",
+    }
+
+
+if len(sys.argv) > 1 and sys.argv[1].endswith("omacontrib.py") and "--notify" in sys.argv:
+    # Settings actions run the real helper against the box HOME; only GitHub is fictional,
+    # so a move made in the panel shows up in the next snapshot exactly as it would for real.
+    sys.path.insert(0, os.path.dirname(sys.argv[1]))
+    import omacontrib
+    config = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "omacontrib")
+    settings = omacontrib.Settings(__import__("pathlib").Path(config)).read()
+    groups = omacontrib.contribution_groups(settings)
+    passed = {"name": "Tests", "status": "SUCCESS", "bucket": "success"}
+    failed = {"name": "QML lint", "status": "FAILURE", "bucket": "failed"}
+    rows = [
+        pr("1", 13961, "omacom/omarchy", "Remove notifications withdrawn by senders", "No review decision", [passed], 1, 5),
+        pr("2", 842, "quickshell-mirror/quickshell", "Document keyboard focus handoff for nested popups", "Changes requested", [failed], 4, 2),
+        pr("3", 214, "waycrate/panel-kit", "Add accessible labels to compact controls", "Approved", [passed], 2),
+        pr("4", 97, "river-tools/theme-pack", "Ship the midnight color variant", "Review required", [], draft=True),
+    ]
+    submission = {
+        "id": "5", "number": 71, "repository": "omacom/omarchy-plugin-marketplace",
+        "title": "OmaContrib plugin submission", "url": "https://github.com/omacom/omarchy-plugin-marketplace/issues/71",
+        "draft": False, "review": "", "discussion": 3, "inline": 0, "checks": [],
+        "counts": dict.fromkeys(("running", "success", "skipped", "failed", "unknown"), 0),
+        "error": None, "fetchedAt": 1790942280, "updatedAt": "2026-10-02T11:54:00Z",
+        "kind": "submission", "status": "Security review",
+    }
+    merged = pr("6", 18, "example/legacy-theme", "Refresh palette for the autumn release", "Approved", [])
+    merged.update(kind="merged", status="Shipped in v2.4")
+    closed = pr("7", 13870, "omacom/omarchy", "Keep notification history across restarts", "Closed · not merged", [])
+    closed.update(kind="closed", status="Closed · not merged")
+    visible, hidden = [], []
+    for row in rows + [submission, merged, closed]:
+        group, row["groupBy"] = omacontrib.group_for(row["repository"], row["url"], groups)
+        row["group"] = group["id"]
+        (visible if group["count"] else hidden).append(row)
+    result = {"prs": visible, "excluded": hidden}
+    omacontrib.annotate_tracks(result, settings)
+    visible, hidden = result["prs"], result["excluded"]
+    print(json.dumps({
+        "schemaVersion": 1, "accounts": ["octocat"], "availableAccounts": ["octocat", "hubot"],
+        "groups": [{key: group[key] for key in ("id", "name", "count")} for group in groups],
+        "prs": visible, "excluded": hidden,
+        "partial": False, "stale": False, "error": "", "fetchedAt": 1790942400, "lastSuccessAt": 1790942400,
+    }, separators=(",", ":")))
+else:
+    os.execv("/usr/bin/python3", ["python3", *sys.argv[1:]])

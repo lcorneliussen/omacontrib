@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 
-SPEC = importlib.util.spec_from_file_location("helper", Path(__file__).resolve().parents[1] / "bin/github_pr_status.py")
+SPEC = importlib.util.spec_from_file_location("helper", Path(__file__).resolve().parents[1] / "bin/omacontrib.py")
 h = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(h)
 
@@ -44,6 +44,8 @@ class ScriptedAPI:
 
     def graphql(self, query, timeout=35, **variables):
         self.calls.append((query, variables))
+        if query in {h.SUBMISSION_SEARCH, h.MERGED_SEARCH, h.CLOSED_SEARCH} and not self.responses:
+            return search_page([])
         if not self.responses:
             raise AssertionError("Unexpected API request: " + query)
         response = self.responses.pop(0)
@@ -67,6 +69,89 @@ def concurrent_refresh(path, calls):
 
 
 class HelperTests(unittest.TestCase):
+    def test_settings_add_remove_and_private_permissions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = h.Settings(Path(directory) / "config")
+            settings.move_rule("owner", "excluded", "Example")
+            settings.move_rule("repository", "excluded", "Community/Project")
+            settings.move_rule("item", "excluded", "https://github.com/community/project/pull/4")
+            later = settings.create_group_and_move("item", "https://github.com/community/project/issues/5", "Review later")
+            settings.add("account", "alice")
+            value = settings.read()
+            self.assertEqual(value["schemaVersion"], 2)
+            self.assertEqual(value["accounts"], ["alice"])
+            self.assertEqual(value["groups"][1]["owners"], ["example"])
+            self.assertEqual(value["groups"][1]["repositories"], ["community/project"])
+            self.assertEqual(value["groups"][1]["items"], ["https://github.com/community/project/pull/4"])
+            self.assertEqual(value["groups"][2]["id"], later)
+            self.assertEqual(value["groups"][2]["items"], ["https://github.com/community/project/issues/5"])
+            self.assertEqual(settings.path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(settings.path.parent.stat().st_mode & 0o777, 0o700)
+            settings.move_rule("owner", "inbox", "EXAMPLE")
+            self.assertEqual(settings.read()["groups"][1]["owners"], [])
+
+    def test_exclusions_partition_rows_without_hiding_discovery(self):
+        source = pr()
+        api = ScriptedAPI(search_page([source]), {"nodes": [source]})
+        result = h.snapshot(api, "alice", {}, {"repositories": [], "owners": ["example"]})
+        self.assertEqual(result["prs"], [])
+        self.assertEqual([row["id"] for row in result["excluded"]], ["p1"])
+        self.assertEqual(result["excluded"][0]["group"], "excluded")
+
+    def test_individual_item_group_takes_precedence(self):
+        groups = h.contribution_groups({})
+        groups.append({"id": "later", "name": "Later", "count": False, "items": ["https://github.com/example/project/pull/1"], "repositories": [], "owners": []})
+        groups[1]["owners"] = ["example"]
+        group, scope = h.group_for("example/project", "https://github.com/example/project/pull/1", groups)
+        self.assertEqual((group["id"], scope), ("later", "item"))
+
+    def test_authored_pull_requests_include_personal_repositories(self):
+        personal = pr("personal")
+        personal["repository"]["nameWithOwner"] = "alice/project"
+        external = pr("external")
+        external["repository"]["nameWithOwner"] = "community/project"
+        found, partial = h.discover(ScriptedAPI(search_page([personal, external])), "alice")
+        self.assertEqual([item["id"] for item in found], ["personal", "external"])
+        self.assertEqual(found[0]["kind"], "pull_request")
+        self.assertEqual(partial, "")
+
+    def test_marketplace_submission_status_and_comments(self):
+        issue = {
+            "id": "submission-1", "number": 42, "title": "[Plugin]: OmaContrib",
+            "url": "https://github.com/omacom/omarchy-plugin-marketplace/issues/42",
+            "state": "OPEN", "updatedAt": "2026-10-02T00:00:00Z",
+            "author": {"login": "alice"},
+            "repository": {"nameWithOwner": h.MARKETPLACE_REPOSITORY},
+            "labels": {"nodes": [{"name": "validated"}, {"name": "needs-fixes"}]},
+            "comments": {"totalCount": 3},
+        }
+        rows = h.discover_submissions(ScriptedAPI(search_page([issue])), "alice")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["kind"], "submission")
+        self.assertEqual(rows[0]["status"], "Needs fixes")
+        self.assertEqual(rows[0]["discussion"], 3)
+
+    def test_merged_omarchy_contribution_is_marked_shipped_only_when_tag_contains_it(self):
+        merged = {
+            "id": "merged-1", "number": 7, "title": "Ship it",
+            "url": "https://github.com/omacom/omarchy/pull/7", "state": "MERGED",
+            "updatedAt": "2026-10-01T00:00:00Z", "mergedAt": "2026-10-01T00:00:00Z",
+            "author": {"login": "alice"}, "mergeCommit": {"oid": "abc123"},
+            "repository": {"nameWithOwner": "omacom/omarchy", "latestRelease": {
+                "tagName": "v5.0.0", "publishedAt": "2026-10-02T00:00:00Z",
+                "url": "https://github.com/omacom/omarchy/releases/tag/v5.0.0"}},
+        }
+
+        class API(ScriptedAPI):
+            def rest(self, endpoint, timeout=35):
+                self.endpoint = endpoint
+                return {"status": "ahead"}
+
+        api = API({"search": {"nodes": [merged]}})
+        rows = h.discover_merged(api, "alice")
+        self.assertEqual(rows[0]["status"], "Shipped in Omarchy v5.0.0")
+        self.assertIn("compare/abc123...v5.0.0", api.endpoint)
+
     def test_discovery_pagination_dedup_scope_and_drafts(self):
         first, draft = pr(), pr("p2", draft=True)
         draft["updatedAt"] = "2026-09-06T02:00:00Z"
@@ -222,13 +307,13 @@ class HelperTests(unittest.TestCase):
         api = ScriptedAPI(search_page(items), {"nodes": items[:20]}, {"nodes": items[20:]})
         result = h.snapshot(api, "alice", {})
         self.assertEqual(len(result["prs"]), 21)
-        self.assertEqual([len(call[1]["ids"]) for call in api.calls[1:]], [20, 1])
+        self.assertEqual([len(call[1]["ids"]) for call in api.calls if "ids" in call[1]], [20, 1])
 
     def test_rate_limit_stops_remaining_batches(self):
         items = [pr(str(i)) for i in range(21)]
         api = ScriptedAPI(search_page(items), h.FetchError("rate limited", "rate_limit", 900))
         result = h.snapshot(api, "alice", {})
-        self.assertEqual(len(api.calls), 2)
+        self.assertEqual(len(api.calls), 5)
         self.assertEqual(len(result["prs"]), 21)
         self.assertTrue(result["partial"])
         self.assertGreater(result["retryAt"], time.time() + 890)
@@ -311,7 +396,7 @@ class CacheTests(unittest.TestCase):
         for process in processes:
             process.join(timeout=5)
             self.assertEqual(process.exitcode, 0)
-        self.assertEqual(calls.value, 2)
+        self.assertEqual(calls.value, 5)
         self.assertEqual(h.Cache(self.path).read()["prs"], [])
 
 

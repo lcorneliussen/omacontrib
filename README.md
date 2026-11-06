@@ -1,257 +1,158 @@
-# GitHub PR Status for Omarchy
+# OmaContrib
 
-Your authored **open pull requests**, including drafts, in the Omarchy bar.
-Uses the active `gh` account on **github.com**, across public and private
-repositories the account can access. No repository configuration required.
+OmaContrib answers one question from the Omarchy bar: **what happened to the
+things I contributed?**
 
-![Plugin preview with example data](preview.png)
+It tracks:
 
-## What it shows
+- authored open pull requests across your own and other repositories;
+- CI, review decisions, discussion, inline review comments, and merge readiness;
+- recently merged external pull requests and whether their merge commit is
+  contained in the repository's latest GitHub release tag;
+- pull requests closed without a GitHub merge, kept for 30 days because
+  maintainers of mirrored projects often apply a patch by hand and close it;
+- declared landing requirements: what still has to happen after the
+  contribution itself before the fix reaches this machine;
+- your own Omarchy plugin and theme submission issues, including marketplace
+  labels such as `needs-fixes`, `security-review-required`, `validated`,
+  `approved-and-verified`, and `listed`.
 
-- A PR icon, open-PR count, and running/failure/stale indicator in the bar.
-- A scrollable panel, grouped by stack and most recently updated group first, with repository, PR number,
-  title, Open/Draft badge, and GitHub's review decision.
-- Separate **Discussion** and **Inline** comment counts. Discussion counts PR
-  conversation comments. Inline counts submitted code-review comments and replies,
-  including resolved/outdated discussions and dismissed reviews. Pending review
-  comments and review summary text are excluded.
-- A solid green “✓ Ready to merge” badge, plus a subtle card tint and border,
-  when fresh data confirms merge readiness
-  and passing CI. Cancelled checks are allowed when GitHub reports a clean,
-  mergeable PR. Running, failed, or unknown checks suppress it;
-  skipped/neutral checks are allowed alongside at least one passing check.
-- A proportional check bar. Click its summary, or use Left/Right, to see the
-  individual check names and original GitHub statuses.
+Contributions can be organized into named groups using individual item,
+repository, or owner rules. Each group remains browsable and has its own toggle
+for whether its items contribute to the number shown in the bar.
 
-| Bar segment | GitHub statuses |
-| --- | --- |
-| Running | Queued, pending, waiting, requested, expected, in progress |
-| Success | Success |
-| Skipped | Skipped, neutral, cancelled |
-| Failed | Failure, error, timed out, action required, startup failure, stale |
-| Unknown | Unrecognized or unavailable status |
+For `omacom/omarchy`, inclusion in a release is shown as **Shipped in Omarchy**.
+For other repositories it is shown as **Released in** the verified tag. A merge
+without a containing release is shown as **Merged · awaiting release**.
 
-No checks is distinct from success. Unknown statuses have a labelled gray segment.
-Repeated attempts of the same workflow job show only the newest check run, so
-superseded failures do not block merge readiness. Jobs from different workflows
-or apps remain separate; checks without workflow metadata are grouped only
-within their own check suite.
-Cancellation stays visible as `CANCELLED` in the expanded details.
-Review decisions are Approved, Changes requested, Review required, or No review
-decision; they do not claim the PR is mergeable.
+## Privacy and permissions
 
-## Stack grouping
-
-GitHub stacks appear together under a repository and stack-number heading. Within
-each stack, PRs run from bottom to top and show their actual position, such as
-`1/3` and `3/3`. Groups and standalone PRs are ordered by their latest visible PR
-update. Only your authored open PRs (including drafts) appear; positions are not
-renumbered when other stack members are merged, closed, or authored by someone else.
-
-Stack metadata comes from GitHub's read-only GraphQL API in the existing detail
-request. No `gh stack` extension or local repository checkout is needed. PRs without
-stack membership remain standalone. Failed detail refreshes retain cached stack
-information with the existing stale indicator.
-
-## Ready-to-merge notifications
-
-The widget sends a desktop notification when an authored PR previously seen as
-**Review required** or **Changes requested** becomes **Approved** and ready to merge.
-It waits for a non-draft PR, GitHub mergeability `MERGEABLE` and merge state `CLEAN`,
-and no running, failed, or unknown checks. See the
-[GitHub merge-state definitions](https://docs.github.com/en/graphql/reference/pulls#mergestatestatus).
-Stale or partial refreshes never trigger notifications.
-
-Pending review cycles persist in the private cache, so approval followed by delayed
-CI completion still triggers an alert. Each cycle is notified once across monitors
-and shell restarts; a new required review arms another alert. PRs already approved
-when first discovered are silent. Account changes reset this history. Notifications
-arrive on the usual refresh schedule and include the repository, number, and title.
-
-`notify-send` must be available on the shell PATH (provided by `libnotify`). Delivery
-is best effort, with no retry if the desktop notification service fails. The widget
-passes `--notify` to the helper; direct helper commands stay silent unless you add it.
+OmaContrib uses one or more existing `gh` logins and makes read-only GitHub API requests.
+It never posts, reviews, merges, or changes GitHub data. It stores a private local
+cache beneath `~/.cache/omacontrib/` and account/exclusion settings beneath
+`~/.config/omacontrib/`, with directory/file modes 700/600. Tokens stay in the
+GitHub CLI credential store and are never written to OmaContrib files.
 
 ## Requirements
 
-- Omarchy with the Quattro plugin runtime (tested with 4.0.2).
-- Python 3.10+ (standard library only) and GitHub CLI `gh` on the shell's PATH.
-- A working `gh auth login --hostname github.com` session.
-- `wl-copy` (from `wl-clipboard`) for copying PR references.
+- Omarchy Quattro plugin runtime
+- Python 3.10 or newer
+- GitHub CLI authenticated with `gh auth login --hostname github.com`
+- `wl-copy` for copying links and references
 
-No additional daemon, token configuration, Python packages, or elevated privileges
-are required. The plugin uses `gh api` for read-only requests; it never posts,
-reviews, merges, or changes pull requests.
-
-## Copying a PR
-
-With a PR selected in the panel, press **C** to copy its full URL, or
-**Shift+C** to copy a compact `owner/repo#123` reference. The full URL is handy
-for pasting into an agent conversation to ask for a fix or review.
-Copying keeps the panel open and briefly confirms success in a small toast;
-clipboard failures show a “Could not copy” toast. Shortcuts use the keyboard-selected
-row, not the hovered row, and copy plain text without a trailing newline.
-
-## Install
-
-Run inside your Omarchy session:
-
-```sh
-omarchy plugin add https://github.com/victorhsb/omarchy-github-pr-status --enable
-```
-
-The widget appears in the right bar section. Sign in with
-`gh auth login --hostname github.com` if you have not already done so.
-
-To update a Git-installed copy:
-
-```sh
-omarchy plugin update torugo.github-pr-status
-```
-
-Omarchy installs and updates from the repository's default branch. Release tags
-identify tested snapshots; the command above does not pin an installation to a tag.
-
-## Install a local development checkout
-
-Run from the checkout inside your Omarchy session:
+## Install this checkout
 
 ```sh
 python3 install.py --enable
 ```
-If an update still shows the old layout after installation, run
-`omarchy restart shell` to reload cached QML components. This briefly reloads the
-bar and desktop overlays.
 
-This validates the plugin, copies its runtime files into
-`~/.config/omarchy/plugins/torugo.github-pr-status/`, discovers it, and enables it
-in the right bar section. Re-run to update the installed copy after editing this
-checkout. Without `--enable`, the installer copies and discovers the plugin but
-does not change its enabled state. Files are copied, not symlinked, as required
-by Omarchy. It does not edit packaged Omarchy source.
-
-If you previously installed a development copy, remove it with
-`omarchy plugin remove torugo.github-pr-status` before using the Git installation
-command. Omarchy backs up non-Git plugin folders when removing them.
+The user-owned plugin is installed at
+`~/.config/omarchy/plugins/community.omacontrib/`. Packaged Omarchy
+files are not modified.
 
 ## Controls
 
 | Action | Control |
 | --- | --- |
-| Open/close panel | Left click the bar widget |
-| Refresh | Right click widget, click Refresh, or press `r` |
-| Select PR | Up/Down, `j`/`k`, or Tab/Shift+Tab |
-| Expand/collapse checks | Right/Left, `l`/`h`, or click check summary/bar |
-| Open selected PR in browser | Enter/Space, or click PR title |
-| Close | Escape or outside click |
+| Open or close | Left-click the widget |
+| Refresh | Right-click, `r`, or the panel action |
+| Select | Up/Down or `j`/`k` |
+| Expand checks | Left/Right or `h`/`l` |
+| Open on GitHub | Enter, Space, or click the title |
+| Copy URL/reference | `c` / `Shift+c` |
+| Exclude the selected item, or bring it back from Excluded (also the ⊘ button on each row) | `x` |
+| Move the selected item's whole repository to Excluded | `Shift+x` |
+| Select groups | `1`–`9`, or click the group name |
+| Include a group in the bar count | Click the filled/empty dot beside its name |
+| Move one item | Drag its move control onto a group, or click it |
+| Assign a repository or owner | Click a card's move control for the scoped actions |
+| Create and move in one step | Use **New group** in the move menu, or drop on the new-group field and enter a name |
+| Create or delete a group | Use the group controls above the contribution list |
+| Select authenticated accounts | Click the account chips |
+| Authenticate another account | Click **Add GitHub account** |
 
-Shell commands use the same lifecycle:
+Open PRs refresh every minute (every 20 seconds while visible checks are
+running). Release containment is refreshed hourly to avoid unnecessary API use.
+
+## Landing: merged is not the same as available
+
+A fix only helps once it reaches the software you run. OmaContrib does not
+guess that path; you (or the agent that did the analysis) declare it once, and
+the row then stays visible until every step is done:
 
 ```sh
-omarchy-shell shell summon torugo.github-pr-status '{}'
-omarchy-shell shell hide torugo.github-pr-status
-omarchy plugin disable torugo.github-pr-status
-omarchy plugin enable torugo.github-pr-status --section right
+python3 bin/omacontrib.py --track https://github.com/file/file/pull/178 \
+  --needs-package file \
+  --after https://github.com/example/terminal/pull/42 \
+  --workaround "wrapper script that runs file -S" \
+  --note "seccomp filter kills file on pipes; found while debugging previews"
 ```
 
-## Refresh and failures
+| Option | Meaning |
+| --- | --- |
+| `--track URL` | Any GitHub issue, pull request or discussion, yours or not. Tracking it again replaces its requirements. |
+| `--after URL` | Another issue, pull request or discussion that must close first, such as a downstream dependency bump. Repeatable. |
+| `--needs-package NAME` | The installed pacman package must be newer than the upstream version installed right now. A rebuild of the same version does not count. |
+| `--needs-package 'NAME>=VERSION'` | Use this once you know which release carries the fix (`>` also works). Repeatable. |
+| `--workaround TEXT` | The fork, patch, or setting to remove. Shown on the row and repeated in the landing notification. |
+| `--note TEXT` | Why this matters to you, or where the analysis came from. |
+| `--untrack URL` | Stop following it. |
 
-Refreshes every 60 seconds, or every 20 seconds while the panel is open and checks
-are running. Each widget instance reads a shared snapshot; a cross-process lock
-coalesces requests from multiple monitors. Manual refreshes within three seconds
-also share one fetch.
+The row shows each step (`✓ Closed · not merged → ○ file > 5.48 · installed
+5.48-1`), its status reads **Awaiting …** for the first unfinished step, and it
+becomes **Landed** with a notification when the last one completes. Linked
+GitHub items are refreshed hourly; installed versions are read on every
+refresh. A closed step counts as done, because a hand-applied patch and a
+rejected one look the same on GitHub: the steps after it are the evidence.
+A discussion counts as done once it is closed or has an accepted answer.
 
-The helper resolves the active account, searches for its authored open PRs,
-batches detail requests in groups of 20, and follows search, check, and review
-pagination. Additional check pages remain pinned to the original head commit.
-Merged/closed PRs disappear on the next successful discovery/detail refresh.
-The list is limited to 100 PRs, most recently updated first. Reaching a limit
-with more results available is reported as an incomplete list.
+### Follow-through: status lines and originating sessions
 
-Each refresh has a shared 60-second budget, including waiting for the cache lock
-and resolving the account. Every request uses at most 35 seconds or the remaining
-budget, whichever is shorter. A refresh stops requesting when its budget expires;
-bounded cleanup and JSON serialization can add a little time afterward.
+Every followed row carries a one-line status and the agent sessions it came
+from, so a contribution that needs occasional energy can be picked up again
+in seconds:
 
-Fixed resource limits also apply:
+| Key | Action |
+| --- | --- |
+| `s` | Run a background, read-only `claude -p` check (gh `view`/`search`, `git ls-remote`, `pacman -Q`/`-Si`, GitHub pages only) that records a new status line. While it runs, the row shows the step it is on |
+| `w` | Follow that check live in a terminal, or read the last check's full report; afterwards `c` continues the conversation. A check on an item with no registered session also becomes the session `o` resumes |
+| `o` | Resume the newest registered session (`claude --resume` / `codex resume`) in a new herdr workspace in its directory; a session on another computer opens through the herdr machine with that label, or `ssh -t` in a terminal. With no session, starts a fresh agent primed to check the item |
 
-- Discovery follows at most ten search pages, even when results repeat.
-- Each PR allows five check pages and five review pages, including the initial
-  detail pages, and 500 entries of each kind. Duplicate and pending entries count
-  toward these limits; duplicates are still excluded from displayed totals.
-- Each GitHub CLI request allows 8 MiB of stdout and 64 KiB of stderr. Exceeding
-  either limit terminates the request and marks its results incomplete.
-- Titles and check names allow 512 characters; check statuses allow 64. Longer
-  display text ends in an ellipsis and is labelled incomplete. Oversized identity
-  fields are rejected: account/repository names allow 256 characters and
-  identifiers, pagination cursors, and URLs allow 1,024.
-- Cache and stdout snapshots each allow 2 MiB of encoded JSON, including metadata
-  and the final newline. Oldest PRs are omitted if needed, with an incomplete-list
-  warning. Oversized or invalid older caches are discarded before reuse.
+```sh
+omacontrib.py --session URL          # run inside an agent: remembers agent, session id, computer, directory
+omacontrib.py --status URL "Committed upstream; waiting for file 5.49 in Arch"
+omacontrib.py --ask-status URL       # same as s
+omacontrib.py --watch-status URL     # same as w
+omacontrib.py --open-session URL     # same as o
+omacontrib.py --dismiss URL          # same as d on a closed row; --undismiss URL shows it again
+```
 
-Capped details retain validated previous values and their timestamp, or show
-unknown values when none are available. Partial check results and partial inline
-comment sums are never presented as complete totals. Incomplete refreshes do not
-advance the last complete update time. These limits are not configurable.
+A pull request closed without a merge gets the same treatment without being
+followed: `s` asks an agent what happened to it (applied by hand, superseded,
+rejected) and shows the answer as its summary, `o` discusses it in its
+originating session or a fresh agent, and `d` dismisses it for good. Asking or
+discussing records the item for its summary and sessions only; `--track` makes it
+a followed item with landing steps.
 
-Network failures preserve the previous snapshot and timestamp. Failed detail
-requests keep old details with a stale label or show unknown values for new PRs.
-Authentication failures clear cached results from the display. Account/config
-changes invalidate cached data. Ordinary failures back off from one minute to
-15 minutes; rate limits pause for at least 15 minutes, including manual requests.
-GitHub search indexing can delay newly opened PRs appearing.
+`skill/SKILL.md` teaches agents to register themselves. It is not part of the
+installed plugin; link it into your agent skills directory, for example
+`ln -s "$PWD/skill" ~/.agents/skills/omacontrib`. Background check output is
+kept in `~/.cache/omacontrib/agent/`.
 
-The cache is `~/.cache/omarchy-github-pr-status/` (or beneath `XDG_CACHE_HOME`).
-It contains private PR metadata, numeric comment counts, check names/statuses,
-timestamps, and a credential/config fingerprint for invalidation—not tokens or
-comment bodies. Directory/file permissions are 700/600. No avatar downloads or
-notifications are performed.
+Only pacman packages are checked. AUR builds from source, npm, PyPI, crates.io
+and similar registries are not inferred.
 
-## Development and verification
-
-GitHub Actions runs the Python tests on Python 3.10 and 3.14 for pushes and pull
-requests. The QML and desktop checks below run locally against installed Omarchy;
-they are not claimed as part of the hosted CI job.
+## Development
 
 ```sh
 python3 -m unittest discover -s tests -v
 omarchy plugin validate .
 python3 tests/check_qml.py
 python3 tests/check_ui.py
+python3 tests/check_box.py   # the real panel in an OmaBox desktop: moves, drag & drop, exclude, dismiss
 ```
 
-`check_qml.py` prepares a temporary import map for the installed shell's `qs.*`
-modules before running `qmllint`. Quickshell resolves those modules dynamically
-at runtime; a bare `qmllint -I /usr/share/omarchy/shell` does not on all versions.
-
-`check_ui.py` runs Qt Quick tests offscreen using the production content/row QML,
-the installed shell's keyboard dispatcher, and isolated theme tokens. It exercises
-navigation, clicks, expansion, refresh selection, empty/error states, and the
-initial list-position regression. It also regenerates the dark and light previews
-from fictional data. These tests do not start another Quickshell process or change
-the desktop theme.
-
-For a read-only live fetch:
-
-```sh
-python3 bin/github_pr_status.py --force
-```
-
-This prints private PR metadata, so do not paste its full output into public
-issues. Tests and the preview use fictional example data.
-
-## Remove
-
-```sh
-omarchy plugin remove torugo.github-pr-status
-```
-
-The metadata cache is left behind. Delete the `omarchy-github-pr-status` directory
-under your cache directory if you also want to remove it.
-
-## Credits
-
-Inspired by [Jankees' GitHub Build Monitor](https://github.com/jankeesvw/omarchy-github-build-monitor).
-Panel integration follows [Omarchy's plugin contract](https://plugins.omarchy.org/develop.html)
-and the built-in clock. The PR data helper and presentation are written for this
-plugin. MIT licensed.
+OmaContrib is derived from
+[GitHub PR Status](https://github.com/victorhsb/omarchy-github-pr-status), whose
+careful cache, pagination, resource-limit, and QML behavior remain covered by the
+inherited test suite. MIT licensed; see `LICENSE`.

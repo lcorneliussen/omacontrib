@@ -390,8 +390,13 @@ class ProcessLimitTests(unittest.TestCase):
                                "import json, pathlib, sys\n"
                                "query = json.load(sys.stdin)['query']\n"
                                f"fixtures = json.loads(pathlib.Path({str(fixtures)!r}).read_text())\n"
-                               "key = 'viewer' if 'viewer' in query else 'search' if 'search(' in query else 'details'\n"
-                               "print(json.dumps({'data': fixtures[key]}))\n")
+                               "if 'mergedAt' in query:\n"
+                               " print(json.dumps({'data': {'search': {'nodes': []}}}))\n"
+                               "elif '... on Issue' in query:\n"
+                               " print(json.dumps({'data': {'search': {'issueCount': 0, 'nodes': [], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}))\n"
+                               "else:\n"
+                               " key = 'viewer' if 'viewer' in query else 'search' if 'search(' in query else 'details'\n"
+                               " print(json.dumps({'data': fixtures[key]}))\n")
             fake_gh.chmod(0o700)
             env = dict(os.environ, PATH=str(path) + os.pathsep + os.environ.get("PATH", ""),
                        XDG_CACHE_HOME=str(path / "cache"), GH_CONFIG_DIR=str(path / "gh-config"))
@@ -407,7 +412,7 @@ class ProcessLimitTests(unittest.TestCase):
             self.assertEqual(len(result["prs"]), 3)
             self.assertLessEqual(len(first.stdout), h.MAX_SNAPSHOT_BYTES)
             self.assertNotIn("authFingerprint", result)
-            cache_file = path / "cache/omarchy-github-pr-status/snapshot.json"
+            cache_file = path / "cache/omacontrib/accounts/default/snapshot.json"
             self.assertLessEqual(cache_file.stat().st_size, h.MAX_SNAPSHOT_BYTES)
             self.assertEqual(cache_file.stat().st_mode & 0o777, 0o600)
             # A failing gh proves the second invocation really uses the safe cache.

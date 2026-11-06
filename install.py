@@ -7,8 +7,8 @@ import os
 from pathlib import Path
 import subprocess
 
-PLUGIN_ID = "torugo.github-pr-status"
-FILES = ("BarWidget.qml", "Panel.qml", "PrContent.qml", "PrRow.qml", "bin/github_pr_status.py",
+PLUGIN_ID = "community.omacontrib"
+FILES = ("BarWidget.qml", "Panel.qml", "PrContent.qml", "PrRow.qml", "bin/omacontrib.py",
          "assets/git-pull-request.svg", "README.md", "LICENSE")
 
 
@@ -42,9 +42,14 @@ def main():
             stream.write(data)
         os.replace(temporary, destination)
     subprocess.run(["omarchy", "plugin", "validate", str(target)], check=True)
-    subprocess.run(["omarchy-shell", "shell", "rescanPlugins"], check=True)
-    if args.enable:
+    shell_running = subprocess.run(
+        ["omarchy-shell", "shell", "rescanPlugins"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    ).returncode == 0
+    if args.enable and shell_running:
         subprocess.run(["omarchy", "plugin", "enable", PLUGIN_ID, "--section", "right"], check=True)
+    elif args.enable:
+        print("Omarchy shell is not running; files installed but enablement was deferred.")
     print(f"Installed {target}")
 
 

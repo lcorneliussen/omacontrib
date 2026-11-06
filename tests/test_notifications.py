@@ -89,6 +89,25 @@ class NotificationTests(unittest.TestCase):
             with patch.object(h.subprocess, "run", side_effect=failure):
                 h.notify_ready(row, h.Deadline())
 
+    def test_lifecycle_notifications_cover_merge_release_and_submission_advances(self):
+        base = dict(id="pr-1", repository="community/tool", number=1, title="Improve tool")
+        previous = {"attemptedAt": 1, "prs": [dict(base, kind="pull_request")]}
+        merged = dict(base, id="merged:pr-1", kind="merged", status="Merged · awaiting release")
+        events = h.lifecycle_notifications({"prs": [merged]}, previous, True)
+        self.assertEqual(events[0][0], "Contribution merged")
+
+        released = dict(merged, status="Released in v2.0.0")
+        events = h.lifecycle_notifications({"prs": [released]},
+            {"attemptedAt": 2, "prs": [merged]}, True)
+        self.assertEqual(events[0][0], "Released in v2.0.0")
+
+        submission = dict(base, id="submission:1", kind="submission", status="Validated")
+        approved = dict(submission, status="Approved")
+        events = h.lifecycle_notifications({"prs": [approved]},
+            {"attemptedAt": 3, "prs": [submission]}, True)
+        self.assertEqual(events[0][0], "Submission Approved")
+        self.assertEqual(h.lifecycle_notifications({"prs": [approved]}, {}, True), [])
+
     def test_installed_helper_resolves_bundled_icon_from_another_directory(self):
         import runpy
         import shutil
@@ -99,7 +118,7 @@ class NotificationTests(unittest.TestCase):
             destination = target / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source / name, destination)
-        spec = importlib.util.spec_from_file_location("installed_helper", target / "bin/github_pr_status.py")
+        spec = importlib.util.spec_from_file_location("installed_helper", target / "bin/omacontrib.py")
         installed = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(installed)
         with patch.object(installed.subprocess, "run") as run:
