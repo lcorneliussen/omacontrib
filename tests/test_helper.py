@@ -71,7 +71,7 @@ def concurrent_refresh(path, calls):
             with calls.get_lock():
                 calls.value += 1
             time.sleep(0.05)
-            return {"viewer": {"login": "alice"}} if "viewer" in query else search_page([])
+            return {"viewer": {"login": "alice"}} if "viewer { login }" in query else search_page([])
     h.run(API(), h.Cache(Path(path)), force=True)
 
 
@@ -111,6 +111,38 @@ class HelperTests(unittest.TestCase):
         groups[1]["owners"] = ["example"]
         group, scope = h.group_for("example/project", "https://github.com/example/project/pull/1", groups)
         self.assertEqual((group["id"], scope), ("later", "item"))
+
+    def test_auto_groups_injects_access_visibility_buckets(self):
+        groups = h.auto_groups(h.contribution_groups({}))
+        self.assertEqual([g["id"] for g in groups], ["inbox", "private", "maintained", "excluded"])
+        self.assertEqual(groups[0]["name"], "Upstream")
+        self.assertEqual([g["count"] for g in groups[:3]], [True, True, False])
+        # Stays within the strict snapshot/settings schema, and is idempotent.
+        h.Settings.validate({"schemaVersion": 2, "accounts": [], "groups": groups})
+        self.assertEqual([g["id"] for g in h.auto_groups(groups)], [g["id"] for g in groups])
+
+    def test_auto_groups_defers_to_user_owned_ids_or_names(self):
+        owned_id = [dict(h.contribution_groups({})[0]),
+                    {"id": "maintained", "name": "Mine", "count": True, "items": [], "repositories": [], "owners": []}]
+        self.assertEqual(h.auto_groups(owned_id), owned_id)
+        owned_name = [{"id": "inbox", "name": "Upstream", "count": True, "items": [], "repositories": [], "owners": []}]
+        self.assertEqual(h.auto_groups(owned_name), owned_name)
+
+    def test_group_for_routes_by_access_then_visibility(self):
+        groups = h.auto_groups(h.contribution_groups({}))
+
+        def route(access, visibility):
+            row = {"access": access, "visibility": visibility}
+            return h.group_for("o/r", "https://github.com/o/r/pull/1", groups, row)[0]["id"]
+        self.assertEqual(route("contributor", "public"), "inbox")      # upstream fallback
+        self.assertEqual(route("contributor", "private"), "private")
+        self.assertEqual(route("maintainer", "public"), "maintained")
+        self.assertEqual(route("maintainer", "private"), "maintained")  # access wins over visibility
+        # row=None keeps the old fallback (no auto-routing); a manual rule overrides the auto bucket.
+        self.assertEqual(h.group_for("o/r", "https://github.com/o/r/pull/1", groups)[0]["id"], "inbox")
+        groups[-1]["repositories"] = ["o/r"]
+        row = {"access": "contributor", "visibility": "private"}
+        self.assertEqual(h.group_for("o/r", "https://github.com/o/r/pull/1", groups, row)[1], "repository")
 
     def test_authored_pull_requests_include_personal_repositories(self):
         personal = pr("personal")
@@ -405,6 +437,57 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(process.exitcode, 0)
         self.assertEqual(calls.value, 6)
         self.assertEqual(h.Cache(self.path).read()["prs"], [])
+
+
+class ProvenanceAndPrimingTests(unittest.TestCase):
+    def test_repo_access_and_visibility_classification(self):
+        for permission, access in (("ADMIN", "maintainer"), ("MAINTAIN", "maintainer"),
+                                   ("WRITE", "contributor"), ("TRIAGE", "contributor"),
+                                   ("READ", "contributor"), ("NONE", "contributor"), (None, "contributor")):
+            repository = {"nameWithOwner": "example/project"}
+            if permission is not None:
+                repository["viewerPermission"] = permission
+            self.assertEqual(h.repo_access(repository), access)
+        self.assertEqual(h.repo_visibility({"isPrivate": True}), "private")
+        self.assertEqual(h.repo_visibility({"isPrivate": False}), "public")
+        self.assertEqual(h.repo_visibility({}), "public")
+
+    def test_normalized_row_carries_access_and_visibility(self):
+        source = pr()
+        source["repository"].update(viewerPermission="MAINTAIN", isPrivate=True)
+        row = h.normalize(ScriptedAPI(), source)
+        self.assertEqual(row["access"], "maintainer")
+        self.assertEqual(row["visibility"], "private")
+
+    def test_fork_provenance_only_for_cross_repo_pull_requests(self):
+        fork = h.normalize(ScriptedAPI(), dict(pr(), isCrossRepository=True, headRefName="fix-bug",
+                                               headRepository={"nameWithOwner": "alice/project"}, baseRefName="main"))
+        self.assertEqual(fork["fork"], {"repo": "alice/project", "branch": "fix-bug", "base": "example/project:main"})
+        # A same-repo PR (push access to the base) carries no fork provenance.
+        self.assertNotIn("fork", h.normalize(ScriptedAPI(), dict(pr(), isCrossRepository=False)))
+
+    def test_validate_snapshot_accepts_provenance_and_rejects_malformed(self):
+        base = h.normalize(ScriptedAPI(), dict(pr(), isCrossRepository=True, headRefName="b",
+                                               headRepository={"nameWithOwner": "alice/project"}, baseRefName="main"))
+        h.validate_snapshot({"schemaVersion": 1, "prs": [copy.deepcopy(base)], "excluded": []})
+        for bad in (dict(base, access="owner"), dict(base, visibility="secret"),
+                    dict(base, fork={"repo": "a/b"}), dict(base, fork="alice/project"),
+                    dict(base, fork={"repo": "a/b", "branch": "x", "base": "y", "extra": "z"})):
+            with self.assertRaises(ValueError):
+                h.validate_snapshot({"schemaVersion": 1, "prs": [bad], "excluded": []})
+
+    def test_session_prompt_primes_fork_followup_but_stays_read_only_for_checks(self):
+        track = {"url": "https://github.com/example/project/pull/7",
+                 "after": [], "packages": [], "note": "", "workaround": ""}
+        prompt = h.session_prompt(track)
+        self.assertIn("pushing to that fork's branch", prompt)
+        self.assertIn("Never push to the base repository", prompt)
+        # A summary-only follow-up delegates to the read-only investigation prompt, no push guidance.
+        summary = dict(track, summaryOnly=True)
+        self.assertEqual(h.session_prompt(summary), h.summary_prompt(summary))
+        self.assertNotIn("fork", h.session_prompt(summary))
+        # The background status check is unchanged and strictly read-only.
+        self.assertIn("Do not comment, edit, or change anything", h.status_prompt(track))
 
 
 if __name__ == "__main__":

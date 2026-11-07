@@ -185,6 +185,16 @@ Item {
             color: root.foreground; font.family: root.family; font.pixelSize: Style.font.body; font.bold: true; wrapMode: Text.WordWrap
             MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.openRequested() }
         }
+        Text {
+            // Read-only provenance: repo visibility and, for a PR opened from your fork, where its branch lives.
+            objectName: "prProvenance"; width: parent.width; visible: text.length > 0
+            text: [root.pr.visibility === "private" ? "Private" : "",
+                   root.pr.access === "maintainer" ? "you maintain" : "",
+                   root.pr.fork ? "from " + root.pr.fork.repo + (root.pr.fork.branch ? ":" + root.pr.fork.branch : "") : ""]
+                  .filter(function(part) { return part.length > 0 }).join("   ·   ")
+            textFormat: Text.PlainText; elide: Text.ElideMiddle
+            color: root.muted; font.family: root.family; font.pixelSize: Style.font.bodySmall
+        }
         Row {
             // On closed and followed-only rows the review line only repeated the badge.
             width: parent.width; spacing: Style.space(10); visible: !root.closedRow && root.kind !== "tracked"
@@ -349,7 +359,8 @@ Item {
             }
             Rectangle { width: parent.width; height: 1; color: root.muted; opacity: 0.22 }
             Repeater {
-                model: root.groups
+                // Access/visibility buckets (private, maintained) fill automatically; not manual targets.
+                model: root.groups.filter(function(group) { return ["private", "maintained"].indexOf(group.id) < 0 })
                 Rectangle {
                     id: destination; required property var modelData
                     objectName: "destination-" + modelData.id

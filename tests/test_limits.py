@@ -53,15 +53,45 @@ def snapshot(rows):
 
 
 class PaginationLimitTests(unittest.TestCase):
-    def test_exact_pr_limit_is_complete_only_without_more_results(self):
-        rows = [pr(str(i)) for i in range(h.MAX_PRS)]
-        for cursor, total, incomplete in ((None, 100, False), ("more", 101, True), (None, 101, True)):
-            with self.subTest(cursor=cursor, total=total):
-                api = ScriptedAPI(search_page(rows, cursor, total))
-                found, reason = h.discover(api, "alice")
-                self.assertEqual(len(found), h.MAX_PRS)
-                self.assertEqual(bool(reason), incomplete)
-                self.assertEqual(len(api.calls), 1)
+    def discover_over_pages(self, count, issue_count, last_cursor):
+        """Serve `count` authored PRs across 100-node search pages; the final page carries
+        `last_cursor` (whether more results remain) and reports `issue_count` as the total."""
+        rows = [pr(str(i)) for i in range(count)]
+        chunks = [rows[start:start + 100] for start in range(0, len(rows), 100)] or [[]]
+        pages = [search_page(chunk, last_cursor if index == len(chunks) - 1 else "cursor%d" % index, issue_count)
+                 for index, chunk in enumerate(chunks)]
+        api = ScriptedAPI(*pages)
+        found, reason = h.discover(api, "alice")
+        return found, reason, len(api.calls)
+
+    def test_pr_discovery_is_complete_only_when_no_results_remain(self):
+        # A full result set smaller than the cap, with nothing left: complete, paged to exhaustion.
+        found, reason, calls = self.discover_over_pages(150, 150, None)
+        self.assertEqual(len(found), 150)
+        self.assertFalse(reason)
+        self.assertEqual(calls, 2)
+
+        # Exactly the cap, honest total, no remaining cursor: complete.
+        found, reason, calls = self.discover_over_pages(h.MAX_PRS, h.MAX_PRS, None)
+        self.assertEqual(len(found), h.MAX_PRS)
+        self.assertFalse(reason)
+        self.assertEqual(calls, -(-h.MAX_PRS // 100))
+
+        # Cap reached but a cursor still remains: incomplete, even when the total matches.
+        found, reason, calls = self.discover_over_pages(h.MAX_PRS, h.MAX_PRS, "more")
+        self.assertEqual(len(found), h.MAX_PRS)
+        self.assertTrue(reason)
+
+        # issueCount beyond the cap: incomplete even with the page cursor exhausted.
+        found, reason, _ = self.discover_over_pages(h.MAX_PRS, h.MAX_PRS + 1, None)
+        self.assertEqual(len(found), h.MAX_PRS)
+        self.assertTrue(reason)
+
+        # A single over-sized page (more than 100 nodes) is itself a signal of incompleteness.
+        api = ScriptedAPI(search_page([pr(str(i)) for i in range(101)], None, 101))
+        found, reason = h.discover(api, "alice")
+        self.assertEqual(len(found), 100)
+        self.assertTrue(reason)
 
     def test_duplicate_search_pages_stop_after_ten(self):
         api = ScriptedAPI(*(search_page([pr()], str(i), 1) for i in range(10)))
@@ -395,7 +425,7 @@ class ProcessLimitTests(unittest.TestCase):
                                "elif '... on Issue' in query:\n"
                                " print(json.dumps({'data': {'search': {'issueCount': 0, 'nodes': [], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}))\n"
                                "else:\n"
-                               " key = 'viewer' if 'viewer' in query else 'search' if 'search(' in query else 'details'\n"
+                               " key = 'viewer' if 'viewer { login }' in query else 'search' if 'search(' in query else 'details'\n"
                                " print(json.dumps({'data': fixtures[key]}))\n")
             fake_gh.chmod(0o700)
             env = dict(os.environ, PATH=str(path) + os.pathsep + os.environ.get("PATH", ""),
@@ -456,6 +486,80 @@ class ProcessLimitTests(unittest.TestCase):
                 self.execute("import time; time.sleep(30)", request="x" * 100000, timeout=0.1)
         self.assertLess(time.monotonic() - started, 3)
         self.assertIsNotNone(children[0].poll())
+
+
+class DetailBudgetTests(unittest.TestCase):
+    """Incremental refresh must bound expensive detail fetches without losing active PRs."""
+
+    class DetailAPI:
+        """Serves discovery and detail; returns exactly the PR ids each DETAILS call requests."""
+        def __init__(self, sources):
+            self.sources, self.by_id, self.calls = sources, {s["id"]: s for s in sources}, []
+
+        def graphql(self, query, timeout=35, **variables):
+            self.calls.append((query, variables))
+            if query == h.SEARCH:
+                return search_page(self.sources)
+            if query == h.DETAILS:
+                return {"nodes": [self.by_id[identifier] for identifier in variables["ids"]]}
+            if query in {h.SUBMISSION_SEARCH, h.MERGED_SEARCH, h.CLOSED_SEARCH, h.ISSUE_SEARCH}:
+                return search_page([])
+            raise AssertionError("Unexpected query: " + query[:40])
+
+        def rest(self, *args, **kwargs):
+            return {}
+
+        def fetched_ids(self):
+            ids = set()
+            for query, variables in self.calls:
+                if query == h.DETAILS:
+                    ids.update(variables["ids"])
+            return ids
+
+    def cached_previous(self, sources):
+        rows = []
+        for index, source in enumerate(sources):
+            row = h.normalize(ScriptedAPI(), source)
+            row["fetchedAt"] = 100 + index    # higher index == fresher cache
+            row["inline"] = 777               # sentinel: survives reuse, overwritten by a real fetch
+            rows.append(row)
+        # Recent lifecycle timestamp so merged/closed passes are skipped and do not add calls.
+        return {"prs": rows, "lifecycleCheckedAt": time.time()}
+
+    def test_below_budget_every_pr_is_fetched(self):
+        sources = [pr(str(i)) for i in range(5)]
+        api = self.DetailAPI(sources)
+        with patch.object(h, "DETAIL_BUDGET", 10):
+            h.snapshot(api, "alice", copy.deepcopy(self.cached_previous(sources)))
+        self.assertEqual(api.fetched_ids(), {str(i) for i in range(5)})
+
+    def test_past_budget_stalest_are_fetched_and_fresh_stable_rows_reused(self):
+        sources = [pr(str(i)) for i in range(5)]
+        previous = self.cached_previous(sources)
+        # Provenance can shift between refreshes; the cheap search still refreshes it on reused rows.
+        for source in sources:
+            source["repository"].update(viewerPermission="ADMIN", isPrivate=True)
+        api = self.DetailAPI(sources)
+        with patch.object(h, "DETAIL_BUDGET", 2):
+            result = h.snapshot(api, "alice", copy.deepcopy(previous))
+        # Only the two stalest (ids 0,1) are re-fetched; the three freshest are served from cache.
+        self.assertEqual(api.fetched_ids(), {"0", "1"})
+        # ADMIN + private routes these to the (uncounted) "maintained" bucket, so look in both arrays.
+        by_id = {row["id"]: row for row in result["prs"] + result["excluded"]}
+        self.assertEqual(by_id["4"]["inline"], 777)          # reused: detail kept from cache
+        self.assertEqual(by_id["4"]["access"], "maintainer")  # but provenance refreshed from search
+        self.assertEqual(by_id["4"]["visibility"], "private")
+        self.assertEqual(by_id["0"]["inline"], 4)             # re-fetched: sentinel overwritten
+
+    def test_changed_pr_is_always_fetched_even_past_budget(self):
+        sources = [pr(str(i)) for i in range(5)]
+        previous = self.cached_previous(sources)
+        # PR "4" (freshest cache) changed upstream: its updatedAt moved, so it must be re-fetched.
+        sources[4]["updatedAt"] = "2026-10-01T00:00:00Z"
+        api = self.DetailAPI(sources)
+        with patch.object(h, "DETAIL_BUDGET", 1):
+            h.snapshot(api, "alice", copy.deepcopy(previous))
+        self.assertIn("4", api.fetched_ids())
 
 
 if __name__ == "__main__":

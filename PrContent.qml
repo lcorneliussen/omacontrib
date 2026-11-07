@@ -29,6 +29,10 @@ Item {
     readonly property string family: Style.font.family
     readonly property var allRows: (snapshot.prs || []).concat(snapshot.excluded || [])
     readonly property var visibleRows: allRows.filter(function(row) { return (row.group || "inbox") === pane })
+    // Access/visibility buckets are filled automatically (see group_for in the helper); they are not
+    // manual move/drop targets and cannot be renamed, deleted, or toggled. Keep in sync with AUTO_GROUP_SPECS.
+    readonly property var autoGroupIds: ["private", "maintained"]
+    function isAuto(id) { return root.autoGroupIds.indexOf(id) >= 0 }
     readonly property var currentGroup: (snapshot.groups || []).find(function(group) { return group.id === pane }) || ({ id: "inbox", name: "Active", count: true })
     signal openRequested(string url)
     signal refreshRequested()
@@ -275,7 +279,7 @@ Item {
                         anchors.fill: parent
                         onDropped: function(drop) {
                             if (drop.source && drop.source.prData) {
-                                if (groupTab.modelData.id !== root.pane)
+                                if (groupTab.modelData.id !== root.pane && !root.isAuto(groupTab.modelData.id))
                                     root.configRequested("--move-item", [groupTab.modelData.id, drop.source.prData.url])
                                 drop.accept()
                             }
@@ -298,7 +302,8 @@ Item {
                                 anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                                 acceptedButtons: Qt.LeftButton | Qt.RightButton
                                 onClicked: function(mouse) {
-                                    if (mouse.button === Qt.RightButton) {
+                                    // Auto buckets have no rules to edit, so their context menu never opens.
+                                    if (mouse.button === Qt.RightButton && !root.isAuto(groupTab.modelData.id)) {
                                         root.menuGroup = groupTab.modelData
                                         root.confirmingDelete = false
                                         groupMenu.open()
@@ -317,7 +322,7 @@ Item {
                         }
                         Text {
                             id: groupMenuButton
-                            visible: root.pane === groupTab.modelData.id
+                            visible: root.pane === groupTab.modelData.id && !root.isAuto(groupTab.modelData.id)
                             text: "⋯"
                             color: root.muted
                             font.family: root.family; font.pixelSize: Style.font.body
@@ -590,7 +595,7 @@ Item {
             }
             Rectangle {
                 objectName: "deleteGroupAction"
-                visible: root.menuGroup && root.menuGroup.id !== "inbox"
+                visible: root.menuGroup && root.menuGroup.id !== "inbox" && !root.isAuto(root.menuGroup.id)
                 width: parent.width; height: root.confirmingDelete ? Style.space(52) : Style.space(30); radius: Style.space(4)
                 color: deleteHover.hovered ? Util.alpha(Color.urgent, 0.12) : "transparent"
                 Text {

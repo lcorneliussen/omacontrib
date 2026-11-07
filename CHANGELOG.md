@@ -4,6 +4,22 @@
 
 - Faster mouse-wheel scrolling in the list (260 px per notch), merged from
   GitHub PR Status's `dev` branch.
+- Sort contributions automatically by your standing on the repository: an
+  **Upstream** group for public repos you only contribute to, **Private** for
+  private repos you do not maintain, and **Maintained** for repos you own or
+  maintain (not counted in the bar by default). Explicit group rules still win,
+  and these buckets fill themselves — they cannot be renamed, deleted, moved
+  into, or toggled.
+- Show each pull request's provenance read-only: a **Private** tag, whether you
+  maintain the repo, and — for a PR opened from one of your forks — where its
+  branch lives (`from you/repo:branch`). OmaContrib never touches the fork.
+- Prime a freshly opened follow-up agent (the panel's `o`) to answer review
+  feedback by pushing to that fork's branch, never the base repository. The
+  read-only background status check is unchanged.
+- Discover up to 300 authored pull requests (was 100). To stay within GitHub API
+  limits, refreshes are incremental: changed or still-running PRs are always
+  re-read, while stable ones past a per-refresh budget are served from cache and
+  rotated back in by staleness. Below the budget every PR is refreshed as before.
 
 ## OmaContrib 0.1.0 — 2026-11-07
 

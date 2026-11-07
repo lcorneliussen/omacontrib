@@ -19,9 +19,18 @@ It tracks:
   labels such as `needs-fixes`, `security-review-required`, `validated`,
   `approved-and-verified`, and `listed`.
 
-Contributions can be organized into named groups using individual item,
-repository, or owner rules. Each group remains browsable and has its own toggle
-for whether its items contribute to the number shown in the bar.
+Out of the box, contributions sort themselves by your standing on each
+repository: **Upstream** for public repos you only contribute to, **Private**
+for private repos you do not maintain, and **Maintained** for repos you own or
+maintain (shown but not counted in the bar). Each row also carries this
+provenance read-only — a private tag, whether you maintain the repo, and, for a
+pull request opened from one of your forks, where its branch lives.
+
+You can still organize contributions into named groups using individual item,
+repository, or owner rules, which take precedence over the automatic buckets.
+Each group remains browsable and has its own toggle for whether its items
+contribute to the number shown in the bar. The automatic buckets fill
+themselves, so they cannot be renamed, deleted, moved into, or toggled.
 
 For `omacom/omarchy`, inclusion in a release is shown as **Shipped in Omarchy**.
 For other repositories it is shown as **Released in** the verified tag. A merge

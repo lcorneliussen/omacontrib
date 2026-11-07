@@ -26,7 +26,11 @@ from urllib.parse import quote
 
 REFRESH_SECONDS = 60
 REQUEST_SECONDS = 35
-MAX_PRS = 100
+MAX_PRS = 300
+# Per-refresh cap on expensive PR detail fetches. Changed/active PRs are always fetched; stable PRs
+# beyond this cap are kept from cache and rotated in by staleness, so a large backlog does not
+# exhaust the GitHub API. No effect until the backlog exceeds it (everything is fetched below it).
+DETAIL_BUDGET = 40
 MAX_SUBMISSIONS = 25
 MAX_MERGED = 20
 MAX_CLOSED = 20
@@ -62,7 +66,9 @@ NOTIFICATION_ICON = Path(__file__).resolve().parent.parent / "assets/git-pull-re
 
 PAGE = "pageInfo { hasNextPage endCursor }"
 BASIC = """id number title url state isDraft updatedAt
-author { login } repository { nameWithOwner }"""
+author { login } repository { nameWithOwner isPrivate viewerPermission }"""
+# Fork provenance (PullRequest only): where the branch lives, so an agent can push fixes to it.
+HEAD = "headRefName baseRefName isCrossRepository headRepository { nameWithOwner }"
 CHECKS = """nodes { __typename
  ... on CheckRun { id name status conclusion databaseId
    checkSuite { id app { id } workflowRun { workflow { id } } }
@@ -77,10 +83,10 @@ reviews(first:100) { """ + REVIEWS + """ }
 commits(last:1) { nodes { commit { oid statusCheckRollup {
  contexts(first:100) { """ + CHECKS + """ }
 } } } }
-"""
+""" + HEAD + "\n"
 SEARCH = """query($q:String!, $cursor:String) {
  search(query:$q, type:ISSUE, first:100, after:$cursor) {
- issueCount nodes { ... on PullRequest { """ + BASIC + " } } " + PAGE + " } }"
+ issueCount nodes { ... on PullRequest { """ + BASIC + " " + HEAD + " } } " + PAGE + " } }"
 DETAILS = "query($ids:[ID!]!) { nodes(ids:$ids) { ... on PullRequest { " + DETAIL + " } } }"
 SUBMISSION_SEARCH = """query($q:String!, $cursor:String) {
  search(query:$q, type:ISSUE, first:25, after:$cursor) {
@@ -97,7 +103,7 @@ MERGED_SEARCH = """query($q:String!) {
   nodes { ... on PullRequest {
    id number title url state updatedAt mergedAt author { login }
    mergeCommit { oid }
-   repository { nameWithOwner latestRelease { tagName publishedAt url } }
+   repository { nameWithOwner isPrivate viewerPermission latestRelease { tagName publishedAt url } }
   } }
  } }"""
 CLOSED_SEARCH = """query($q:String!) {
@@ -326,6 +332,34 @@ def display_text(value, limit=MAX_TEXT):
     return value if len(value) <= limit else value[:limit - 1] + "…"
 
 
+def repo_access(repository):
+    """Your standing on the repo: maintainer (can merge) vs contributor (waiting on others)."""
+    return "maintainer" if repository.get("viewerPermission") in {"ADMIN", "MAINTAIN"} else "contributor"
+
+
+def repo_visibility(repository):
+    return "private" if repository.get("isPrivate") else "public"
+
+
+def fork_from_pr(pr):
+    """For an authored cross-repo PR, the fork its branch lives on, so an agent can push fixes there.
+
+    Read-only provenance; OmaContrib never touches the fork. `None` when the PR is not from a fork
+    (you had push access to the base). Tolerates being re-read from a source record.
+    """
+    if "fork" in pr:
+        return pr["fork"]
+    if not pr.get("isCrossRepository"):
+        return None
+    repo = (pr.get("headRepository") or {}).get("nameWithOwner")
+    if not repo:
+        return None
+    base = pr["repository"]["nameWithOwner"] + ":" + (pr.get("baseRefName") or "")
+    return {"repo": reference(repo, MAX_NAME),
+            "branch": reference(pr.get("headRefName") or "", MAX_NAME),
+            "base": reference(base, MAX_NAME)}
+
+
 def source_record(pr):
     """Keep only bounded fields needed for discovery and stale fallbacks."""
     return {
@@ -335,7 +369,37 @@ def source_record(pr):
         "author": {"login": reference(pr["author"]["login"], MAX_NAME)},
         "updatedAt": reference(pr["updatedAt"], MAX_STATUS),
         "state": reference(pr["state"], MAX_STATUS), "isDraft": boolean(pr["isDraft"]),
+        "access": pr["access"] if "access" in pr else repo_access(pr["repository"]),
+        "visibility": pr["visibility"] if "visibility" in pr else repo_visibility(pr["repository"]),
+        "fork": fork_from_pr(pr),
     }
+
+
+# Access/visibility auto-buckets, shown as display groups. Membership is computed in group_for (not
+# stored on the group), so the group dicts stay within the strict settings schema. "inbox" (renamed
+# "Upstream" for display) stays the fallback: public contributions and anything unclassified.
+AUTO_GROUP_SPECS = (("private", "Private", True), ("maintained", "Maintained", False))
+AUTO_GROUP_PREDICATES = {
+    "maintained": lambda row: row.get("access") == "maintainer",
+    "private": lambda row: row.get("visibility") == "private" and row.get("access") != "maintainer",
+}
+AUTO_GROUP_NAMES = {name.lower() for _, name, _ in AUTO_GROUP_SPECS} | {"upstream"}
+
+
+def auto_groups(groups):
+    """Insert the access/visibility buckets after inbox, or return groups unchanged.
+
+    Skips injection when the user already owns those ids or names, when inbox is not first, or when
+    there is no room under MAX_GROUPS, so custom group setups always win. Idempotent.
+    """
+    if (not groups or groups[0]["id"] != "inbox" or len(groups) + len(AUTO_GROUP_SPECS) > MAX_GROUPS
+            or any(group["id"] in AUTO_GROUP_PREDICATES for group in groups)
+            or any(group["name"].lower() in AUTO_GROUP_NAMES for group in groups)):
+        return groups
+    upstream = dict(groups[0], name="Upstream" if groups[0]["name"] == "Active" else groups[0]["name"])
+    buckets = [{"id": gid, "name": name, "count": count, "items": [], "repositories": [], "owners": []}
+               for gid, name, count in AUTO_GROUP_SPECS]
+    return [upstream] + buckets + list(groups[1:])
 
 
 def contribution_groups(settings):
@@ -348,7 +412,7 @@ def contribution_groups(settings):
     ]
 
 
-def group_for(repository, url, groups):
+def group_for(repository, url, groups, row=None):
     repository_key = repository.lower()
     owner = repository.split("/", 1)[0].lower()
     for group in groups:
@@ -360,6 +424,12 @@ def group_for(repository, url, groups):
     for group in groups:
         if owner in group["owners"]:
             return group, "owner"
+    # No explicit rule: fall into an access/visibility bucket when one matches, else the inbox fallback.
+    if row is not None:
+        for group in groups:
+            predicate = AUTO_GROUP_PREDICATES.get(group["id"])
+            if predicate and predicate(row):
+                return group, "default"
     return groups[0], "default"
 
 
@@ -408,7 +478,7 @@ def discover(api, login, exclusions=None):
         if cursor is None or pages >= MAX_SEARCH_PAGES or len(found) >= MAX_PRS:
             break
     if total > MAX_PRS or cursor is not None:
-        reason = reason or "PR discovery limit reached (100 PRs / 10 pages); this list is incomplete."
+        reason = reason or f"PR discovery limit reached ({MAX_PRS} PRs / {MAX_SEARCH_PAGES} pages); this list is incomplete."
     return sorted(found.values(), key=lambda pr: pr["updatedAt"], reverse=True), reason
 
 
@@ -461,6 +531,7 @@ def discover_submissions(api, login):
             "labels": labels,
             "mergeable": "UNKNOWN",
             "mergeStateStatus": "UNKNOWN",
+            "access": "contributor", "visibility": "public",
         })
     return rows
 
@@ -501,6 +572,7 @@ def discover_merged(api, login, exclusions=None):
             "fetchedAt": time.time(), "kind": "merged", "status": status,
             "labels": [], "mergeable": "UNKNOWN", "mergeStateStatus": "UNKNOWN",
             "releaseUrl": release_url,
+            "access": repo_access(pr["repository"]), "visibility": repo_visibility(pr["repository"]),
         })
     return rows
 
@@ -518,6 +590,7 @@ def lifecycle_row(kind, item, status):
         "checks": [], "counts": dict.fromkeys(BUCKETS, 0), "error": None,
         "fetchedAt": time.time(), "kind": kind, "status": status,
         "labels": [], "mergeable": "UNKNOWN", "mergeStateStatus": "UNKNOWN",
+        "access": repo_access(item["repository"]), "visibility": repo_visibility(item["repository"]),
     }
 
 
@@ -532,7 +605,7 @@ def discover_closed(api, login, groups=None):
     rows = [lifecycle_row("closed", pr, "Closed · not merged") for pr in nodes[:100]
             if pr and pr.get("state") == "CLOSED" and (pr.get("closedAt") or "")[:10] >= since]
     # Closed experiments in uncounted groups must not crowd out the ones that matter.
-    rows.sort(key=lambda row: not group_for(row["repository"], row["url"], groups)[0]["count"])
+    rows.sort(key=lambda row: not group_for(row["repository"], row["url"], groups, row)[0]["count"])
     return rows[:MAX_CLOSED]
 
 
@@ -719,17 +792,28 @@ def bucket(check):
     return "unknown"
 
 
+def apply_provenance(row, source):
+    """Attach read-only access/visibility, and fork provenance when the PR came from one."""
+    row["access"] = source["access"]
+    row["visibility"] = source["visibility"]
+    if source.get("fork"):
+        row["fork"] = source["fork"]
+    else:
+        row.pop("fork", None)
+    return row
+
+
 def basic_row(pr):
     kind = pr.get("kind", "pull_request")
     pr = source_record(pr)
-    return {
+    return apply_provenance({
         "id": pr["id"], "number": pr["number"], "title": pr["title"], "url": pr["url"],
         "repository": pr["repository"]["nameWithOwner"], "author": pr["author"]["login"],
         "updatedAt": pr["updatedAt"], "draft": pr["isDraft"], "review": "Unknown",
         "discussion": None, "inline": None, "checks": None, "counts": None,
         "error": "Details unavailable", "fetchedAt": None,
         "kind": kind,
-    }
+    }, pr)
 
 
 def review_pages(api, pr):
@@ -862,18 +946,47 @@ def normalize(api, pr):
     return row
 
 
+def reusable(old_row, source):
+    """A cached detail row that could be kept instead of re-fetched when the backlog is large.
+
+    Only ever skipped past DETAIL_BUDGET, and never for a PR that could have silently changed:
+    one whose updatedAt moved, that still has a check running (CI finishes without bumping
+    updatedAt), that errored, or that was never fully fetched is always re-fetched.
+    """
+    return (isinstance(old_row, dict)
+            and old_row.get("kind") == "pull_request"
+            and not old_row.get("error")
+            and old_row.get("checks") is not None
+            and old_row.get("updatedAt") == source["updatedAt"]
+            and not (old_row.get("counts") or {}).get("running"))
+
+
 def snapshot(api, login, previous, exclusions=None):
     api = budget_api(api)
     exclusions = exclusions or {"repositories": [], "owners": []}
-    groups = contribution_groups(exclusions)
+    groups = auto_groups(contribution_groups(exclusions))
     previous = safe_previous(previous)
     discovered, truncated = discover(api, login, exclusions)
     rows, errors = [], []
     previous_rows = previous.get("prs", []) + previous.get("excluded", [])
     old = {pr["id"]: pr for pr in previous_rows}
+    # Incremental refresh under an API budget. Changed/active PRs are always fetched; when the
+    # backlog exceeds DETAIL_BUDGET, the surplus of freshest-cached stable PRs is served from cache
+    # (the stalest rotate back in). Below the budget every PR is fetched, so small accounts and the
+    # tests are unaffected. Discovery order is preserved so tie-broken row positions do not shift.
+    reuse_candidates = [(old.get(s["id"]), s) for s in discovered if reusable(old.get(s["id"]), s)]
+    reuse_candidates.sort(key=lambda pair: pair[0].get("fetchedAt") or 0)  # stalest first
+    rotate = max(0, DETAIL_BUDGET - (len(discovered) - len(reuse_candidates)))
+    skip = {source["id"]: old_row for old_row, source in reuse_candidates[rotate:]}
+    to_fetch = []
+    for source in discovered:
+        if source["id"] in skip:
+            rows.append(apply_provenance(copy.deepcopy(skip[source["id"]]), source))
+        else:
+            to_fetch.append(source)
     retry, stopped = 0, None
-    for start in range(0, len(discovered), 20):
-        batch = discovered[start:start + 20]
+    for start in range(0, len(to_fetch), 20):
+        batch = to_fetch[start:start + 20]
         batch_error = None
         try:
             if stopped:
@@ -918,7 +1031,7 @@ def snapshot(api, login, previous, exclusions=None):
                 retry = max(retry, getattr(exc, "retry_after", 0))
         if retry:
             # Stop requesting after a rate limit; retain explicit unknown/stale rows for the remainder.
-            for source in discovered[start + 20:]:
+            for source in to_fetch[start + 20:]:
                 row = copy.deepcopy(old.get(source["id"], basic_row(source)))
                 row["error"] = "Refresh paused: GitHub rate limit reached."
                 rows.append(row)
@@ -961,7 +1074,7 @@ def snapshot(api, login, previous, exclusions=None):
         error = truncated + " " + error
     visible, hidden = [], []
     for row in rows:
-        group, group_by = group_for(row["repository"], row["url"], groups)
+        group, group_by = group_for(row["repository"], row["url"], groups, row)
         row["group"] = group["id"]
         row["groupBy"] = group_by
         (visible if group["count"] else hidden).append(row)
@@ -1043,7 +1156,8 @@ def validate_snapshot(value):
     seen = set()
     for row in active + hidden:
         optional = {"mergeable", "mergeStateStatus", "awaitingReady", "stack", "account", "group", "groupBy",
-                    "kind", "status", "labels", "releaseUrl", "excludedBy", "landing", "followUp", "closed"}
+                    "kind", "status", "labels", "releaseUrl", "excludedBy", "landing", "followUp", "closed",
+                    "access", "visibility", "fork"}
         if not isinstance(row, dict) or not row_fields <= set(row) or set(row) - row_fields - optional:
             raise ValueError("Invalid PR")
         for key, maximum in (("id", MAX_REFERENCE), ("url", MAX_REFERENCE), ("title", MAX_TEXT),
@@ -1101,6 +1215,16 @@ def validate_snapshot(value):
             text(row["status"], MAX_STATUS)
         if "releaseUrl" in row:
             text(row["releaseUrl"], MAX_REFERENCE, nullable=True)
+        if "access" in row and row["access"] not in {"maintainer", "contributor"}:
+            raise ValueError("Invalid access level")
+        if "visibility" in row and row["visibility"] not in {"public", "private"}:
+            raise ValueError("Invalid visibility")
+        if "fork" in row:
+            fork = row["fork"]
+            if not isinstance(fork, dict) or set(fork) != {"repo", "branch", "base"}:
+                raise ValueError("Invalid fork")
+            for key, maximum in (("repo", MAX_NAME), ("branch", MAX_NAME), ("base", MAX_NAME)):
+                text(fork[key], maximum)
         if "labels" in row:
             if not isinstance(row["labels"], list) or len(row["labels"]) > 30:
                 raise ValueError("Invalid labels")
@@ -1827,6 +1951,41 @@ def status_prompt(track):
     return "\n".join(lines)
 
 
+def session_prompt(track):
+    """Prime a fresh interactive agent to act on a contribution — unlike the read-only status check.
+
+    For a pull request, point it at the fork the PR was opened from, so it addresses review feedback
+    by pushing there. OmaContrib never touches the fork itself; it only tells the agent how to.
+    """
+    if track.get("summaryOnly"):
+        return summary_prompt(track)
+    url = track["url"]
+    lines = [f"Follow up on this contribution of mine: {url}"]
+    if track.get("after"):
+        lines.append("It also waits for: " + ", ".join(track["after"]))
+    for label, key in (("Why it matters", "note"), ("Workaround in place", "workaround")):
+        if track.get(key):
+            lines.append(f"{label}: {track[key]}")
+    if track.get("status"):
+        lines.append(f"Previous status ({track['status']['at']}): {track['status']['text']}")
+    lines.append("")
+    if "/pull/" in url:
+        lines += [
+            "Read the pull request first — its state, review threads and CI.",
+            f"Check where its branch lives: gh pr view {url} --json "
+            "state,isCrossRepository,headRepositoryOwner,headRepository,headRefName,baseRefName",
+            "If it is open with review feedback and was opened from a fork of yours, address the feedback by",
+            "pushing to that fork's branch: clone or fetch the fork, check out the branch, make the requested",
+            "changes, and push — the PR updates automatically. Never push to the base repository, and do not",
+            "force-push over commits you did not make.",
+            "If it is closed, find out what happened to it (applied by hand, superseded, rejected) and what is left.",
+        ]
+    else:
+        lines.append("Read the item and its comments and linked issues/PRs, and work out what still has to happen.")
+    lines.append("Tell me what you find and your plan before you change anything.")
+    return "\n".join(lines)
+
+
 def find_track(settings, url):
     track = next((track for track in settings.get("tracks", []) if track["url"] == url), None)
     if track is None:
@@ -2034,7 +2193,7 @@ def open_session(settings_store, url, launcher=None, local_host=None):
         executable, resume = AGENTS[session["agent"]]
         kind, arguments, host, cwd = session["agent"], [resume, session["id"]], session["host"], session["cwd"]
     else:
-        kind, arguments, host, cwd = "claude", [status_prompt(track)], local_host, str(Path.home())
+        kind, arguments, host, cwd = "claude", [session_prompt(track)], local_host, str(Path.home())
         executable = "claude"
     remote = host.lower() != local_host.lower()
     if launcher is None:
@@ -2236,7 +2395,7 @@ def merge_account_results(results, available_accounts, exclusions):
         "prs": active, "excluded": hidden,
         "partial": any(result.get("partial") for result in results),
         "stale": any(result.get("stale") for result in results), "error": message,
-        "groups": contribution_groups(exclusions),
+        "groups": auto_groups(contribution_groups(exclusions)),
         "excludedRepositories": [], "excludedOwners": [],
         "configFingerprint": Settings.fingerprint(exclusions),
     }
