@@ -335,7 +335,7 @@ class HelperTests(unittest.TestCase):
             self.assertEqual(json.loads(args[1])["variables"]["q"], '$(touch /tmp/unsafe)')
 
     def test_cli_failure_classification_and_graphql_partial_errors(self):
-        for stdout, stderr, kind in [('', 'gh auth login', 'auth'), ('', 'rate limit exceeded', 'rate_limit'), ('', 'connection refused', 'network'), ('{"data":{"nodes":[]},"errors":[{"message":"forbidden"}]}', '', 'api')]:
+        for stdout, stderr, kind in [('', 'gh auth login', 'auth'), ('', 'rate limit exceeded', 'rate_limit'), ('', "API rate limit exceeded for 192.0.2.1. (But here's the good news: Authenticated requests get a higher rate limit.)", 'auth'), ('', 'connection refused', 'network'), ('{"data":{"nodes":[]},"errors":[{"message":"forbidden"}]}', '', 'api')]:
             with patch.object(h, "bounded_process", return_value=subprocess.CompletedProcess([], 1, stdout, stderr)):
                 with self.assertRaises(h.FetchError) as raised:
                     h.GitHub().graphql("query {}")

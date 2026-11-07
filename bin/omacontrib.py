@@ -270,6 +270,9 @@ class GitHub:
         if proc.returncode or payload.get("errors"):
             # Only classify stderr: do not copy arbitrary CLI output or credentials to the UI/cache.
             message = (proc.stderr + json.dumps(payload.get("errors", []))).lower()
+            # Without a login gh asks anonymously, and GitHub answers with its anonymous rate limit.
+            if "authenticated requests get a higher rate limit" in message:
+                raise FetchError("Sign in with gh auth login --hostname github.com.", "auth")
             if any(word in message for word in ("rate limit", "rate_limit", "rate_limited", "abuse")):
                 raise FetchError("GitHub rate limit reached. Retrying in 15 minutes.", "rate_limit", 900)
             if any(word in message for word in ("auth login", "bad credentials", "401", "authentication", "token has expired")):

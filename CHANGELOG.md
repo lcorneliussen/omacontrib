@@ -27,6 +27,9 @@ replacing it.
   follows the mouse.
 - `skill/SKILL.md` teaches agents to register sessions and statuses.
 - The helper is now `bin/omacontrib.py`; `bin/github_pr_status.py` is gone.
+- Without a `gh` login the panel now asks you to sign in instead of reporting
+  GitHub's anonymous rate limit.
+- Install with `omarchy plugin add`; the README documents removal.
 
 The entries below are from GitHub PR Status, which OmaContrib is derived from.
 

@@ -52,17 +52,23 @@ use your Claude account and its tokens; see
 ## Install
 
 ```sh
-git clone https://github.com/lcorneliussen/omacontrib
-cd omacontrib
-python3 install.py --enable
-omarchy restart shell
+omarchy plugin add https://github.com/lcorneliussen/omacontrib --enable
 ```
 
-To update, `git pull` and run `python3 install.py` again.
+Update it with `omarchy plugin update community.omacontrib`.
 
-The user-owned plugin is installed at
-`~/.config/omarchy/plugins/community.omacontrib/`. Packaged Omarchy
-files are not modified.
+To work on a checkout instead, run `python3 install.py --enable` in it; it copies
+only the plugin's files into the same place.
+
+## Remove
+
+```sh
+omarchy plugin remove community.omacontrib
+rm -rf ~/.config/omacontrib ~/.cache/omacontrib   # settings, cache and agent logs
+```
+
+If you linked the agent skill, remove that link too (for example
+`rm ~/.agents/skills/omacontrib`).
 
 ## Controls
 
