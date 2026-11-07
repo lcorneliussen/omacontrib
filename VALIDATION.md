@@ -1,5 +1,28 @@
 # Validation
 
+## Release 0.2.0 (2026-11-07)
+
+- Release adds automatic access/visibility grouping (Upstream / Private /
+  Maintained), read-only fork provenance on each pull request, fork-aware
+  priming of a freshly opened follow-up agent, and a higher authored-PR cap
+  (300) kept within GitHub API limits by incremental, budgeted refresh. Manifest
+  (0.2.0) and changelog are included in the release commit.
+- The full Python suite (107 tests), `omarchy plugin validate`, QML lint, and
+  all Qt Quick UI results (`tests/check_ui.py`) pass. New regressions cover
+  access/visibility derivation, fork provenance and its validation, the detail
+  budget and cache reuse, the session priming prompt, and the automatic group
+  buckets with their precedence and UI guards.
+- `tests/check_box.py` (OmaBox desktop) was not run: the `omabox` binary is not
+  installed in this environment. The grouping UI is instead covered by the
+  Qt Quick harness.
+- Work landed on top of upstream `main` (`cd1dd09`) by rebase, not force-push:
+  the new `ISSUE_SEARCH` discovery and the `closed` row field were reconciled
+  with the grouping and provenance changes, and the suite re-verified green.
+- The runtime QML and helper were installed and byte-verified against the
+  checkout before the release. Previews are unchanged. Hosted CI and the
+  published tag are verified separately after pushing, and reported with the
+  release rather than assumed here.
+
 ## Mouse wheel sensitivity (2026-10-08)
 
 - Mouse wheel notches now scroll 260 theme-scaled pixels. Smaller angle deltas

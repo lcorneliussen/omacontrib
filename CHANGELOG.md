@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## OmaContrib 0.2.0 — 2026-11-07
 
 - Faster mouse-wheel scrolling in the list (260 px per notch), merged from
   GitHub PR Status's `dev` branch.

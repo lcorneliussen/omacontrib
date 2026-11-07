@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "community.omacontrib",
   "name": "OmaContrib",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "OmaContrib contributors",
   "license": "MIT",
   "description": "Track external contributions and your Omarchy marketplace submissions through review, release, and distribution.",
