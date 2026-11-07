@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Faster mouse-wheel scrolling in the list (260 px per notch), merged from
+  GitHub PR Status's `dev` branch.
+
 ## OmaContrib 0.1.0 — 2026-11-07
 
 First release under the new name and plugin id `community.omacontrib`. It
