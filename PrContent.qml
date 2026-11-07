@@ -28,7 +28,35 @@ Item {
     readonly property color muted: Util.alpha(Color.popups.text, 0.68)
     readonly property string family: Style.font.family
     readonly property var allRows: (snapshot.prs || []).concat(snapshot.excluded || [])
-    readonly property var visibleRows: allRows.filter(function(row) { return (row.group || "inbox") === pane })
+    readonly property var paneRows: allRows.filter(function(row) { return (row.group || "inbox") === pane })
+    // Quick filter within a group: "" = all; an owner/repo key; or "//other" for the collapsed tail.
+    property string groupFilter: ""
+    readonly property int filterTop: 4
+    // One owner in the pane (e.g. Personal) → filter by repository; several → filter by owner.
+    readonly property bool filterByRepo: {
+        let owners = {}
+        for (let i = 0; i < paneRows.length; i++) owners[paneRows[i].repository.split("/")[0]] = 1
+        return Object.keys(owners).length <= 1
+    }
+    function filterKey(row) { return root.filterByRepo ? row.repository : row.repository.split("/")[0] }
+    function filterLabel(key) { return root.filterByRepo ? key.split("/").slice(1).join("/") : key }
+    readonly property var filterChips: {
+        let counts = {}
+        for (let i = 0; i < paneRows.length; i++) { let k = root.filterKey(paneRows[i]); counts[k] = (counts[k] || 0) + 1 }
+        return Object.keys(counts).sort(function(a, b) { return counts[b] - counts[a] })
+                     .map(function(k) { return { key: k, label: root.filterLabel(k), count: counts[k] } })
+    }
+    readonly property var topChips: filterChips.slice(0, filterTop)
+    readonly property bool hasOther: filterChips.length > filterTop
+    readonly property var visibleRows: {
+        if (!root.groupFilter) return root.paneRows
+        if (root.groupFilter === "//other") {
+            let top = {}
+            for (let i = 0; i < root.topChips.length; i++) top[root.topChips[i].key] = 1
+            return root.paneRows.filter(function(r) { return !top[root.filterKey(r)] })
+        }
+        return root.paneRows.filter(function(r) { return root.filterKey(r) === root.groupFilter })
+    }
     // Access/visibility buckets are filled automatically (see group_for in the helper); they are not
     // manual move/drop targets and cannot be renamed, deleted, or toggled. Keep in sync with AUTO_GROUP_SPECS.
     readonly property var autoGroupIds: ["personal", "maintained"]
@@ -174,8 +202,10 @@ Item {
         if (addingGroup && !creatingGroup) cancelGroupEditor()
         selectedId = ""
         expandedId = ""
+        groupFilter = ""
         Qt.callLater(function() { list.currentIndex = 0; list.positionViewAtBeginning() })
     }
+    onGroupFilterChanged: Qt.callLater(function() { list.currentIndex = 0; list.positionViewAtBeginning() })
     onSnapshotChanged: {
         let groups = snapshot.groups || []
         if (groups.length && !groups.some(function(group) { return group.id === pane })) pane = groups[0].id
@@ -403,6 +433,38 @@ Item {
             font.family: root.family
             font.pixelSize: Style.font.bodySmall
             color: Color.urgent
+        }
+        Flow {
+            // Quick filter within the current group: All + the biggest owners/repos + a collapsed Other.
+            objectName: "groupFilterChips"
+            width: parent.width; spacing: Style.space(6); visible: root.filterChips.length > 1
+            Repeater {
+                model: {
+                    let chips = [{ key: "", label: "All", count: 0 }]
+                    for (let i = 0; i < root.topChips.length; i++) chips.push(root.topChips[i])
+                    if (root.hasOther) chips.push({ key: "//other", label: "Other", count: 0 })
+                    return chips
+                }
+                Rectangle {
+                    id: chip
+                    required property var modelData
+                    objectName: "filterChip-" + modelData.key
+                    readonly property bool active: root.groupFilter === modelData.key
+                    height: Style.space(22); radius: height / 2
+                    width: chipLabel.implicitWidth + Style.space(14)
+                    color: chip.active ? Util.alpha(Color.accent, 0.18)
+                        : chipHover.hovered ? Util.alpha(Color.popups.text, 0.08) : Util.alpha(Color.popups.text, 0.04)
+                    Text {
+                        id: chipLabel; anchors.centerIn: parent
+                        text: chip.modelData.label + (chip.modelData.count ? "  " + chip.modelData.count : "")
+                        textFormat: Text.PlainText
+                        color: chip.active ? Color.accent : root.muted
+                        font.family: root.family; font.pixelSize: Style.font.bodySmall
+                    }
+                    HoverHandler { id: chipHover }
+                    TapHandler { onTapped: root.groupFilter = chip.modelData.key }
+                }
+            }
         }
         Rectangle { width: parent.width; height: 1; color: root.muted; opacity: 0.25 }
     }

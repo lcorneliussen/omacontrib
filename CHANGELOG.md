@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add a quick filter within each group: a row of chips narrows the list to its
+  biggest owners (or repositories, in a single-owner group like Personal), with
+  the long tail collapsed under **Other** and **All** to clear it.
 - Replace the visibility-based **Private** group with an ownership-based
   **Personal** group: repos under your own account go to Personal, other repos
   you can merge (your organizations) to Maintained, and everything else stays

@@ -69,6 +69,33 @@ Item {
             data.prs[1].stack = { number: 7, position: 3, size: 3 }
             return data
         }
+        function filterRow(id, repo) {
+            let r = row(id, "PR " + id, false, "Approved", [], 0, 0)
+            r.repository = repo
+            r.url = "https://github.com/" + repo + "/pull/" + id
+            return r
+        }
+
+        function test_group_quick_filter_narrows_by_owner_with_other() {
+            let data = example()
+            data.prs = [
+                filterRow("1", "aco/x"), filterRow("2", "aco/y"), filterRow("3", "aco/z"),  // aco: 3
+                filterRow("4", "bco/x"), filterRow("5", "bco/y"),                            // bco: 2
+                filterRow("6", "cco/x"), filterRow("7", "dco/x"), filterRow("8", "eco/x")    // 5 owners total
+            ]
+            content.snapshot = data
+            wait(100)
+            let list = findChild(content, "prList")
+            tryCompare(list, "count", 8)
+            verify(findChild(content, "groupFilterChips").visible)
+            mouseClick(findChild(content, "filterChip-aco"))        // biggest owner
+            tryCompare(list, "count", 3)
+            mouseClick(findChild(content, "filterChip-//other"))    // the tail beyond the top 4
+            tryCompare(list, "count", 1)
+            mouseClick(findChild(content, "filterChip-"))           // All
+            tryCompare(list, "count", 8)
+        }
+
         function test_stack_labels_and_navigation() {
             content.snapshot = stackedExample()
             wait(100)

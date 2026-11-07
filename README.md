@@ -27,6 +27,10 @@ bar; Personal and Maintained are shown but not counted. Each row also carries
 this provenance read-only — a private tag, whether you maintain the repo, and,
 for a pull request opened from one of your forks, where its branch lives.
 
+Within a group, a row of filter chips narrows the list to its biggest owners
+(or repositories, in a single-owner group like Personal), with the rest under
+**Other** and **All** to clear the filter.
+
 You can still organize contributions into named groups using individual item,
 repository, or owner rules, which take precedence over the automatic buckets.
 Each group remains browsable and has its own toggle for whether its items
