@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `install.py --enable` no longer moves the widget back to the right section when
+  it is already enabled, so re-installing (including the auto-redeploy git hooks)
+  keeps wherever you placed it on the bar.
+
 ## OmaContrib 0.2.1 — 2026-11-07
 
 - Fix repositories you own or maintain appearing under **Upstream** instead of

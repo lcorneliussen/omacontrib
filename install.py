@@ -12,9 +12,23 @@ FILES = ("BarWidget.qml", "Panel.qml", "PrContent.qml", "PrRow.qml", "bin/omacon
          "assets/git-pull-request.svg", "README.md", "LICENSE")
 
 
+def already_enabled():
+    """True when the widget is already enabled, so re-installing must not move it off its placement."""
+    try:
+        listing = subprocess.run(["omarchy", "plugin", "list", "--json"],
+                                 capture_output=True, text=True, check=True).stdout
+        plugins = json.loads(listing)
+        plugins = plugins if isinstance(plugins, list) else plugins.get("plugins", [])
+        return any(p.get("id") == PLUGIN_ID and p.get("enabled") for p in plugins)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--enable", action="store_true", help="Enable the widget in the right bar section")
+    parser.add_argument("--enable", action="store_true",
+                        help="Enable the widget (in the right section) only if it is not already enabled, "
+                             "so re-installs keep wherever you placed it")
     args = parser.parse_args()
     source = Path(__file__).resolve().parent
     subprocess.run(["omarchy", "plugin", "validate", str(source)], check=True)
@@ -46,9 +60,9 @@ def main():
         ["omarchy-shell", "shell", "rescanPlugins"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     ).returncode == 0
-    if args.enable and shell_running:
+    if args.enable and shell_running and not already_enabled():
         subprocess.run(["omarchy", "plugin", "enable", PLUGIN_ID, "--section", "right"], check=True)
-    elif args.enable:
+    elif args.enable and not shell_running:
         print("Omarchy shell is not running; files installed but enablement was deferred.")
     print(f"Installed {target}")
 
