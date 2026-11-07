@@ -11,6 +11,8 @@ It tracks:
   contained in the repository's latest GitHub release tag;
 - pull requests closed without a GitHub merge, kept for 30 days because
   maintainers of mirrored projects often apply a patch by hand and close it;
+- issues you opened in other people's repositories, open or closed in the
+  last 30 days, with their comment count;
 - declared landing requirements: what still has to happen after the
   contribution itself before the fix reaches this machine;
 - your own Omarchy plugin and theme submission issues, including marketplace
@@ -33,18 +35,30 @@ cache beneath `~/.cache/omacontrib/` and account/exclusion settings beneath
 `~/.config/omacontrib/`, with directory/file modes 700/600. Tokens stay in the
 GitHub CLI credential store and are never written to OmaContrib files.
 
+Summaries are written by a local `claude -p` run that may only read: `gh`
+view/search commands, `git ls-remote`, `pacman -Q`/`-Si` and GitHub pages. They
+use your Claude account and its tokens; see
+[Automatic summaries](#automatic-summaries) to limit or turn them off.
+
 ## Requirements
 
 - Omarchy Quattro plugin runtime
 - Python 3.10 or newer
 - GitHub CLI authenticated with `gh auth login --hostname github.com`
 - `wl-copy` for copying links and references
+- optional: [Claude Code](https://claude.com/claude-code) for summaries, `herdr`
+  or a terminal for resuming agent sessions
 
-## Install this checkout
+## Install
 
 ```sh
+git clone https://github.com/lcorneliussen/omacontrib
+cd omacontrib
 python3 install.py --enable
+omarchy restart shell
 ```
+
+To update, `git pull` and run `python3 install.py` again.
 
 The user-owned plugin is installed at
 `~/.config/omarchy/plugins/community.omacontrib/`. Packaged Omarchy
@@ -127,12 +141,30 @@ omacontrib.py --open-session URL     # same as o
 omacontrib.py --dismiss URL          # same as d on a closed row; --undismiss URL shows it again
 ```
 
-A pull request closed without a merge gets the same treatment without being
-followed: `s` asks an agent what happened to it (applied by hand, superseded,
-rejected) and shows the answer as its summary, `o` discusses it in its
-originating session or a fresh agent, and `d` dismisses it for good. Asking or
-discussing records the item for its summary and sessions only; `--track` makes it
-a followed item with landing steps.
+Every other row gets the same treatment without being followed: `s` asks an
+agent what it is waiting for (an open item) or what happened to it (applied by
+hand, superseded, rejected), `o` discusses it in its originating session or a
+fresh agent, and on a closed pull request or issue `d` dismisses it for good.
+Asking or discussing records the item for its summary and sessions only;
+`--track` makes it a followed item with landing steps.
+
+### Automatic summaries
+
+Each summary remembers the GitHub state it describes: state, review, comment
+counts, last update, finished checks and landing steps. When that state changes
+and then holds for ten minutes, the bar starts a fresh check by itself; until it
+finishes, the old summary is marked **outdated**. Items without a summary get one
+right away. A status you write with `--status` counts as current.
+
+The agent also judges who has to act. Items waiting on you read **Your move** and
+sort first in their group; everything else follows, most recently changed first.
+
+Only active (counted) rows are summarized, one agent at a time and at most 24
+runs a day. Turn it off or on again with:
+
+```sh
+omacontrib.py --auto-summary off
+```
 
 `skill/SKILL.md` teaches agents to register themselves. It is not part of the
 installed plugin; link it into your agent skills directory, for example

@@ -1,5 +1,35 @@
 # Changelog
 
+## OmaContrib 0.1.0 — 2026-11-07
+
+First release under the new name and plugin id `community.omacontrib`. It
+installs beside GitHub PR Status (`torugo.github-pr-status`) rather than
+replacing it.
+
+- Follow contributions past the merge: recently merged PRs and whether the
+  latest release contains them, PRs closed without a merge (kept 30 days), and
+  issues you opened in other people's repositories.
+- `--track` a GitHub issue, PR or discussion with the steps still needed before
+  the fix reaches this machine: downstream PRs (`--after`) and pacman package
+  versions (`--needs-package`). The row reads **Awaiting …** until it **Landed**,
+  and the landing notification reminds you which workaround to drop.
+- One-line status per item, written by you, by an agent (`--status`), or by a
+  read-only background `claude -p` check (`s`). Watch a check live or read its
+  report with `w`; `o` resumes the agent session that worked on the item, on
+  this computer or another one through herdr or SSH.
+- Summaries refresh themselves when an item's GitHub state changes, at most one
+  agent at a time and 24 runs a day (`--auto-summary off` to stop). The agent
+  judges who has to act; items waiting on you read **Your move** and sort first.
+- Groups: move an item, repository or owner by menu, drag and drop or keys;
+  `x` excludes the selected item, `Shift+x` its repository; `d` dismisses a
+  closed item for good.
+- Row actions use the shell's hover styling and themed tooltips; the selection
+  follows the mouse.
+- `skill/SKILL.md` teaches agents to register sessions and statuses.
+- The helper is now `bin/omacontrib.py`; `bin/github_pr_status.py` is gone.
+
+The entries below are from GitHub PR Status, which OmaContrib is derived from.
+
 ## 1.2.0 — 2026-09-10
 
 - Press C on the selected PR to copy its full URL, or Shift+C to copy an
