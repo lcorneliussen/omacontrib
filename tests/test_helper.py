@@ -41,9 +41,16 @@ class ScriptedAPI:
     def __init__(self, *responses):
         self.responses = list(responses)
         self.calls = []
+        # Issue searches are answered from their own script so existing sequences stay as they were.
+        self.issues = []
 
     def graphql(self, query, timeout=35, **variables):
         self.calls.append((query, variables))
+        if query == h.ISSUE_SEARCH:
+            response = self.issues.pop(0) if self.issues else search_page([])
+            if isinstance(response, Exception):
+                raise response
+            return copy.deepcopy(response)
         if query in {h.SUBMISSION_SEARCH, h.MERGED_SEARCH, h.CLOSED_SEARCH} and not self.responses:
             return search_page([])
         if not self.responses:
@@ -313,7 +320,7 @@ class HelperTests(unittest.TestCase):
         items = [pr(str(i)) for i in range(21)]
         api = ScriptedAPI(search_page(items), h.FetchError("rate limited", "rate_limit", 900))
         result = h.snapshot(api, "alice", {})
-        self.assertEqual(len(api.calls), 5)
+        self.assertEqual(len(api.calls), 6)
         self.assertEqual(len(result["prs"]), 21)
         self.assertTrue(result["partial"])
         self.assertGreater(result["retryAt"], time.time() + 890)
@@ -396,7 +403,7 @@ class CacheTests(unittest.TestCase):
         for process in processes:
             process.join(timeout=5)
             self.assertEqual(process.exitcode, 0)
-        self.assertEqual(calls.value, 5)
+        self.assertEqual(calls.value, 6)
         self.assertEqual(h.Cache(self.path).read()["prs"], [])
 
 

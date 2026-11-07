@@ -30,6 +30,7 @@ MAX_PRS = 100
 MAX_SUBMISSIONS = 25
 MAX_MERGED = 20
 MAX_CLOSED = 20
+MAX_ISSUES = 30
 CLOSED_STICKY_DAYS = 30
 MAX_TRACKS = 20
 MAX_REQUIREMENTS = 5
@@ -42,7 +43,7 @@ MAX_SUMMARIES = 60
 AUTO_SETTLE = 600
 AUTO_DAILY = 24
 WAITING = ("me", "them", "nobody")
-MAX_ROWS = MAX_PRS + MAX_SUBMISSIONS + MAX_MERGED + MAX_CLOSED + MAX_TRACKS
+MAX_ROWS = MAX_PRS + MAX_SUBMISSIONS + MAX_MERGED + MAX_CLOSED + MAX_ISSUES + MAX_TRACKS
 LIFECYCLE_REFRESH_SECONDS = 3600
 MAX_EXCLUSIONS = 200
 MAX_GROUPS = 20
@@ -103,6 +104,11 @@ CLOSED_SEARCH = """query($q:String!) {
  search(query:$q, type:ISSUE, first:100) {
   nodes { ... on PullRequest { """ + BASIC + """ closedAt } }
  } }"""
+ISSUE_SEARCH = """query($q:String!) {
+ search(query:$q, type:ISSUE, first:100) {
+  nodes { ... on Issue { """ + BASIC.replace(" isDraft", "") + """ closedAt stateReason comments { totalCount } } }
+ } }"""
+ISSUE_CLOSED = {"COMPLETED": "Closed · completed", "NOT_PLANNED": "Closed · not planned", "DUPLICATE": "Closed · duplicate"}
 TRACKED = BASIC.replace(" isDraft", "")
 TRACKED_RESOURCE = """resource(url:$u%d) { __typename
  ... on PullRequest { """ + TRACKED + """ }
@@ -527,6 +533,32 @@ def discover_closed(api, login, groups=None):
     return rows[:MAX_CLOSED]
 
 
+def discover_issues(api, login, groups=None):
+    """Issues the account opened elsewhere: open ones, and closed ones for as long as closed PRs stay.
+
+    Issues in the account's own repositories are its to-do list, not contributions.
+    """
+    api = budget_api(api)
+    groups = groups or contribution_groups({})
+    since = time.strftime("%Y-%m-%d", time.gmtime(time.time() - CLOSED_STICKY_DAYS * 86400))
+    query = f"is:issue author:{login} -user:{login} -repo:{MARKETPLACE_REPOSITORY} sort:updated-desc"
+    nodes = api.graphql(ISSUE_SEARCH, q=query)["search"]["nodes"]
+    rows = []
+    for issue in nodes[:100]:
+        if not issue or (issue.get("author") or {}).get("login", "").lower() != login.lower():
+            continue
+        closed = issue.get("state") == "CLOSED"
+        if closed and (issue.get("closedAt") or "")[:10] < since:
+            continue
+        status = ISSUE_CLOSED.get(issue.get("stateReason"), "Closed") if closed else "Open issue"
+        row = lifecycle_row("issue", issue, status)
+        row.update(review="Issue", discussion=integer(issue["comments"]["totalCount"]), closed=closed)
+        rows.append(row)
+    # Issues in uncounted groups must not crowd out the ones that matter; then open before closed.
+    rows.sort(key=lambda row: (not group_for(row["repository"], row["url"], groups)[0]["count"], row["closed"]))
+    return rows[:MAX_ISSUES]
+
+
 def installed_version(name, timeout=5):
     """The locally installed package version, or None when it cannot be established."""
     try:
@@ -645,7 +677,7 @@ def apply_tracks(api, rows, tracks, previous_rows, refresh):
                 if row is None:
                     row = lifecycle_row("tracked", resources[url], source["label"])
                     rows.append(row)
-                elif row["kind"] != "pull_request":
+                elif row["kind"] not in {"pull_request", "issue"}:
                     source["label"] = row["landing"]["steps"][0]["label"] if "landing" in row else row["status"]
                 pending = [(source, "")] + [resource_step(resources[item]) for item in track["after"]]
             elif before is not None:
@@ -905,6 +937,11 @@ def snapshot(api, login, previous, exclusions=None):
     except (FetchError, KeyError, TypeError, ValueError, AttributeError) as exc:
         errors.append("Marketplace submissions are unavailable. " + (str(exc) if isinstance(exc, FetchError) else "Incomplete GitHub response."))
     try:
+        rows.extend(discover_issues(api, login, groups))
+    except (FetchError, KeyError, TypeError, ValueError, AttributeError) as exc:
+        rows.extend(copy.deepcopy(row) for row in previous_rows if row.get("kind") == "issue")
+        errors.append("Issues are unavailable. " + (str(exc) if isinstance(exc, FetchError) else "Incomplete GitHub response."))
+    try:
         if not refresh_lifecycle:
             raise LookupError
         rows.extend(discover_closed(api, login, groups))
@@ -1003,7 +1040,7 @@ def validate_snapshot(value):
     seen = set()
     for row in active + hidden:
         optional = {"mergeable", "mergeStateStatus", "awaitingReady", "stack", "account", "group", "groupBy",
-                    "kind", "status", "labels", "releaseUrl", "excludedBy", "landing", "followUp"}
+                    "kind", "status", "labels", "releaseUrl", "excludedBy", "landing", "followUp", "closed"}
         if not isinstance(row, dict) or not row_fields <= set(row) or set(row) - row_fields - optional:
             raise ValueError("Invalid PR")
         for key, maximum in (("id", MAX_REFERENCE), ("url", MAX_REFERENCE), ("title", MAX_TEXT),
@@ -1015,8 +1052,10 @@ def validate_snapshot(value):
                 text(row[key], MAX_STATUS)
         if "kind" in row:
             text(row["kind"], MAX_STATUS)
-            if row["kind"] not in {"pull_request", "submission", "merged", "closed", "tracked"}:
+            if row["kind"] not in {"pull_request", "submission", "merged", "closed", "tracked", "issue"}:
                 raise ValueError("Invalid contribution kind")
+        if "closed" in row:
+            boolean(row["closed"])
         if "landing" in row:
             landing = row["landing"]
             if (not isinstance(landing, dict) or set(landing) - {"status", "sessions"} != {"landed", "steps", "workaround", "note"}
@@ -2066,7 +2105,7 @@ def lifecycle_notifications(result, previous, enabled):
             before = old.get(row["id"])
             if before and before.get("status") != row.get("status"):
                 notifications.append(("Submission " + row["status"], row))
-        elif row.get("kind") in {"merged", "closed", "tracked"}:
+        elif row.get("kind") in {"merged", "closed", "tracked", "issue"}:
             raw_id = row["id"].removeprefix(row["kind"] + ":")
             before = old.get(row["id"])
             if not before and raw_id in old and row["kind"] != "tracked":

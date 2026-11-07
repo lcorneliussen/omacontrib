@@ -23,7 +23,7 @@ Item {
     readonly property string lifecycleStatus: pr.status || ""
     readonly property bool lifecycleOnly: kind === "merged" || kind === "closed" || kind === "tracked"
     readonly property var landing: pr.landing || null
-    readonly property bool closedRow: kind === "closed"
+    readonly property bool closedRow: kind === "closed" || (kind === "issue" && !!pr.closed)
     // Followed items keep their status line and sessions on the landing; everything else on a follow-up.
     readonly property var context: landing || pr.followUp || null
     // Any contribution can be summarized or discussed; a marketplace submission has no GitHub thread.
@@ -53,7 +53,7 @@ Item {
     readonly property bool lightSurface: (Color.popups.background.r * 0.299 + Color.popups.background.g * 0.587 + Color.popups.background.b * 0.114) > 0.6
     readonly property var colors: ({ running: lightSurface ? "#926000" : "#d5a44c", success: lightSurface ? "#337745" : "#78ad79", skipped: Color.muted, failed: Color.urgent, unknown: Color.muted })
     readonly property bool needsAction: lifecycleStatus === "Needs fixes" || pr.review === "Changes requested"
-    readonly property bool completed: lifecycleStatus === "Listed" || lifecycleStatus === "Approved" || lifecycleStatus === "Landed"
+    readonly property bool completed: lifecycleStatus === "Listed" || lifecycleStatus === "Approved" || lifecycleStatus === "Landed" || lifecycleStatus === "Closed · completed"
         || lifecycleStatus.indexOf("Released in ") === 0 || lifecycleStatus.indexOf("Shipped in ") === 0
     readonly property int total: pr.checks ? pr.checks.length : 0
     readonly property string summary: !pr.counts ? "Unknown" : total === 0 ? "No checks" : ["running", "success", "skipped", "failed", "unknown"].filter(function(key) { return pr.counts[key] > 0 }).map(function(key) { return pr.counts[key] + " " + key }).join("  ·  ")
@@ -191,7 +191,7 @@ Item {
             Text {
                 width: Math.max(0, parent.width - activitySummary.width - Style.space(10))
                 text: root.pr.review
-                    + (!root.lifecycleOnly ? "  ·  " + (root.kind === "submission" ? "Comments " : "Discussion ") + (root.pr.discussion === null ? "—" : root.pr.discussion) : "")
+                    + (!root.lifecycleOnly ? "  ·  " + (root.kind === "submission" || root.kind === "issue" ? "Comments " : "Discussion ") + (root.pr.discussion === null ? "—" : root.pr.discussion) : "")
                     + (root.kind === "pull_request" ? "  ·  Inline " + (root.pr.inline === null ? "—" : root.pr.inline) : "")
                 textFormat: Text.PlainText; elide: Text.ElideRight
                 font.family: root.family; font.pixelSize: Style.font.bodySmall

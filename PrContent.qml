@@ -220,7 +220,7 @@ Item {
         }
         Text {
             width: parent.width
-            text: root.snapshot.accounts && root.snapshot.accounts.length ? root.snapshot.accounts.map(function(account) { return "@" + account }).join(", ") : "External work and your submissions · github.com"
+            text: root.snapshot.accounts && root.snapshot.accounts.length ? root.snapshot.accounts.map(function(account) { return "@" + account }).join(", ") : "Your PRs, issues and submissions · github.com"
             textFormat: Text.PlainText
             elide: Text.ElideRight
             font.family: root.family

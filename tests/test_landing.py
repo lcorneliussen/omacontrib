@@ -159,6 +159,72 @@ class LandingTests(unittest.TestCase):
         self.assertEqual([row["id"] for row in merged["prs"]], ["alice:tracked:node-178"])
 
 
+class IssueTests(unittest.TestCase):
+    """Issues the account opened show up without being tracked by hand."""
+    ISSUE = SOURCE.replace("pull", "issues")
+
+    def issue(self, number, state="OPEN", closed_days=None, reason=None, comments=0, author="alice"):
+        url = self.ISSUE.replace("178", str(number))
+        closed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - closed_days * 86400)) if closed_days is not None else None
+        return dict(resource(url, state, kind="Issue", stateReason=reason, closedAt=closed_at,
+                             comments={"totalCount": comments}), author={"login": author})
+
+    def test_open_and_recently_closed_issues_become_rows(self):
+        api = ScriptedAPI()
+        api.issues = [search_page([
+            self.issue(1, comments=1),
+            self.issue(2, "CLOSED", closed_days=3, reason="NOT_PLANNED"),
+            self.issue(3, "CLOSED", closed_days=90, reason="COMPLETED"),
+            self.issue(4, author="bob"),
+        ])]
+        rows = h.discover_issues(api, "alice")
+        self.assertEqual(api.calls[0][1]["q"], "is:issue author:alice -user:alice -repo:omacom/omarchy-plugin-marketplace sort:updated-desc")
+        self.assertEqual([(row["number"], row["status"], row["discussion"], row["closed"]) for row in rows],
+                         [(1, "Open issue", 1, False), (2, "Closed · not planned", 0, True)])
+        h.validate_snapshot({"schemaVersion": 1, "prs": rows})
+
+    def test_a_new_comment_changes_the_summary_revision(self):
+        before = h.discover_issues(ScriptedAPI(), "alice")
+        api = ScriptedAPI()
+        api.issues = [search_page([self.issue(1)])]
+        quiet = h.discover_issues(api, "alice")[0]
+        api.issues = [search_page([self.issue(1, comments=1)])]
+        commented = h.discover_issues(api, "alice")[0]
+        self.assertEqual(before, [])
+        self.assertNotEqual(h.revision(quiet), h.revision(commented))
+
+    def test_snapshot_lists_issues_and_keeps_them_when_search_fails(self):
+        api = ScriptedAPI(search_page([]))
+        api.issues = [search_page([self.issue(1)])]
+        result = h.snapshot(api, "alice", {})
+        self.assertEqual([row["kind"] for row in result["prs"]], ["issue"])
+        api = ScriptedAPI(search_page([]))
+        api.issues = [h.FetchError("GitHub is unavailable.")]
+        again = h.snapshot(api, "alice", result)
+        self.assertEqual([row["kind"] for row in again["prs"]], ["issue"])
+        self.assertIn("Issues are unavailable", again["error"])
+
+    def test_tracked_issue_keeps_its_landing_on_the_discovered_row(self):
+        rows = h.discover_issues(self._api([self.issue(178)]), "alice")
+        api = ScriptedAPI({"r0": resource(self.ISSUE, kind="Issue", stateReason=None)})
+        h.apply_tracks(api, rows, track(url=self.ISSUE), [], True)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["kind"], "issue")
+        self.assertEqual(rows[0]["landing"]["steps"][0]["label"], "Open")
+
+    def test_closing_an_issue_notifies(self):
+        open_row = h.discover_issues(self._api([self.issue(1)]), "alice")[0]
+        closed_row = h.discover_issues(self._api([self.issue(1, "CLOSED", closed_days=0, reason="COMPLETED")]), "alice")[0]
+        events = h.lifecycle_notifications({"prs": [closed_row]}, {"attemptedAt": 1, "prs": [open_row]}, True)
+        self.assertEqual(events, [("Closed · completed", closed_row)])
+
+    @staticmethod
+    def _api(issues):
+        api = ScriptedAPI()
+        api.issues = [search_page(issues)]
+        return api
+
+
 class TrackSettingsTests(unittest.TestCase):
     def test_track_replaces_and_untrack_removes(self):
         with tempfile.TemporaryDirectory() as directory:

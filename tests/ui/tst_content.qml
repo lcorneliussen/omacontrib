@@ -454,6 +454,29 @@ Item {
             wait(100)
             compare(findChild(list.itemAtIndex(0), "followStatus").text, "Your move  ·  Waiting for review; checks green  ·  claude, 0m ago  ·  outdated")
         }
+        function test_issue_rows_show_comments_and_close_like_pull_requests() {
+            let data = example()
+            let issue = row("181", "Let plugins extend the New session page", false, "Issue", [], 1, 0)
+            Object.assign(issue, { kind: "issue", status: "Open issue", closed: false,
+                url: "https://github.com/example/omarchy-tools/issues/181" })
+            data.prs = [issue]
+            content.snapshot = data
+            wait(100)
+            let list = findChild(content, "prList")
+            compare(findChild(list.itemAtIndex(0), "prStatusText").text, "Open issue")
+            verify(visibleText(list.itemAtIndex(0), "Issue  ·  Comments 1"))
+            verify(!visibleText(list.itemAtIndex(0), "Inline"))
+            verify(!findChild(list.itemAtIndex(0), "dismissAction").visible)
+            data = JSON.parse(JSON.stringify(data))
+            Object.assign(data.prs[0], { status: "Closed · not planned", closed: true })
+            content.snapshot = data
+            wait(100)
+            compare(findChild(list.itemAtIndex(0), "prStatusText").text, "Closed · not planned")
+            verify(findChild(list.itemAtIndex(0), "dismissAction").visible)
+            content.textKey("d")
+            compare(configured.signalArguments[configured.count - 1][0], "--dismiss")
+            compare(configured.signalArguments[configured.count - 1][1], data.prs[0].url)
+        }
         function test_selection_follows_the_pointer() {
             content.snapshot = example()
             wait(100)
