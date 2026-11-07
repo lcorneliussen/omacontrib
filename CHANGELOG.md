@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Click a row anywhere on its card to select it, not only with the arrow keys.
+- Show the last successful refresh time in the panel header, and load the cached
+  snapshot instantly on reload (a new `--cached` mode) instead of a blank panel
+  while the first refresh runs.
 - Add a quick filter within each group: a row of chips narrows the list to its
   biggest owners (or repositories, in a single-owner group like Personal), with
   the long tail collapsed under **Other** and **All** to clear it.

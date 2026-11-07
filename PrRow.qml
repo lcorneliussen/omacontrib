@@ -47,6 +47,7 @@ Item {
     signal expandRequested()
     signal configRequested(string action, var values)
     signal editingFinished()
+    signal selectRequested()
     readonly property color foreground: Color.popups.text
     readonly property color muted: Util.alpha(Color.popups.text, 0.68)
     readonly property string family: Style.font.family
@@ -131,6 +132,8 @@ Item {
         color: root.mergeReady ? Util.alpha(root.colors.success, root.selected ? 0.09 : 0.045) : Util.alpha(Color.popups.text, root.selected ? 0.07 : 0.025)
         border.width: 1
         border.color: root.selected ? Util.alpha(Color.accent, 0.6) : Util.alpha(root.mergeReady ? root.colors.success : Color.muted, root.mergeReady ? 0.28 : 0.18)
+        // Click an empty part of the card to select the row (title/actions keep their own clicks).
+        MouseArea { anchors.fill: parent; onClicked: root.selectRequested() }
     }
     Column {
         id: body

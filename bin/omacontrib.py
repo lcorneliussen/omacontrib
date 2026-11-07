@@ -2424,6 +2424,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--interval", type=int, choices=(20, 60), default=60)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--cached", action="store_true",
+                        help="Print the last cached snapshot without refreshing, for instant display on reload")
     parser.add_argument("--notify", action="store_true", help="Notify when a previously review-blocked PR is ready to merge")
     parser.add_argument("--exclude-repository", metavar="OWNER/REPOSITORY")
     parser.add_argument("--include-repository", metavar="OWNER/REPOSITORY")
@@ -2578,9 +2580,26 @@ def main():
 
         settings = settings_store.read()
         exclusions = settings
+        cache_root = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "omacontrib" / "accounts"
         available = authenticated_accounts()
         selected = settings["accounts"] or available[:1]
-        cache_root = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "omacontrib" / "accounts"
+        if args.cached:
+            # Fast path: show the last cached snapshot on reload, with no network and no refresh.
+            roots = [cache_root / login.lower() for login in selected] or [cache_root / "default"]
+            cached = []
+            for directory in roots:
+                try:
+                    stored = Cache(directory).read()
+                except FetchError:
+                    stored = {}
+                if stored:
+                    cached.append(stored)
+            result = (merge_account_results(cached, available, exclusions) if cached
+                      else {"schemaVersion": 1, "prs": [], "excluded": [], "stale": True, "error": ""})
+            annotate_tracks(result, settings)
+            order_rows(result)
+            sys.stdout.buffer.write(encoded_snapshot(finalize(result, result.get("lastSuccessAt")), public=True))
+            return
         results = []
         if selected:
             for login in selected:

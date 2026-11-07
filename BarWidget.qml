@@ -46,6 +46,12 @@ Ui.BarWidget {
         fetcher.command = args
         fetcher.running = true
     }
+    function loadCached() {
+        // Show the last cached snapshot instantly on load, then refresh in the background.
+        let path = decodeURIComponent(Qt.resolvedUrl("bin/omacontrib.py").toString().replace(/^file:\/\//, ""))
+        cacheLoader.command = ["python3", path, "--cached"]
+        cacheLoader.running = true
+    }
     function fetchFailed() {
         let next = Object.assign({}, snapshot)
         next.stale = true
@@ -58,7 +64,7 @@ Ui.BarWidget {
     implicitHeight: button.implicitHeight
     onBarChanged: injectPanel()
     onOpenedChanged: if (opened) refresh(false)
-    Component.onCompleted: refresh(false)
+    Component.onCompleted: loadCached()
 
     Loader {
         id: panelLoader
@@ -79,6 +85,23 @@ Ui.BarWidget {
         running: root.agentChecking
         repeat: true
         onTriggered: root.refresh(false)
+    }
+    Process {
+        id: cacheLoader
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    let result = JSON.parse(text)
+                    if (!root.loaded && result.schemaVersion === 1 && Array.isArray(result.prs) && Array.isArray(result.excluded)) {
+                        root.snapshot = result
+                        root.loaded = true
+                    }
+                } catch (error) { /* no usable cache yet; the refresh below will populate it */ }
+            }
+        }
+        // qmllint disable signal-handler-parameters
+        onExited: function(exitCode) { Qt.callLater(function() { root.refresh(false) }) }
+        // qmllint enable signal-handler-parameters
     }
     Process {
         id: fetcher

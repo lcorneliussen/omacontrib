@@ -27,6 +27,11 @@ Item {
     readonly property color foreground: Color.popups.text
     readonly property color muted: Util.alpha(Color.popups.text, 0.68)
     readonly property string family: Style.font.family
+    // Last successful refresh, so a reload (which shows the cached snapshot) states its age.
+    readonly property string updatedText: {
+        let at = root.snapshot.lastSuccessAt || root.snapshot.fetchedAt
+        return at ? "updated " + Qt.formatDateTime(new Date(at * 1000), "HH:mm") : ""
+    }
     readonly property var allRows: (snapshot.prs || []).concat(snapshot.excluded || [])
     readonly property var paneRows: allRows.filter(function(row) { return (row.group || "inbox") === pane })
     // Quick filter within a group: "" = all; an owner/repo key; or "//other" for the collapsed tail.
@@ -254,7 +259,12 @@ Item {
         }
         Text {
             width: parent.width
-            text: root.snapshot.accounts && root.snapshot.accounts.length ? root.snapshot.accounts.map(function(account) { return "@" + account }).join(", ") : "Your PRs, issues and submissions · github.com"
+            text: {
+                let base = root.snapshot.accounts && root.snapshot.accounts.length
+                    ? root.snapshot.accounts.map(function(account) { return "@" + account }).join(", ")
+                    : "Your PRs, issues and submissions · github.com"
+                return root.updatedText ? base + "  ·  " + root.updatedText : base
+            }
             textFormat: Text.PlainText
             elide: Text.ElideRight
             font.family: root.family
@@ -520,6 +530,7 @@ Item {
             onConfigRequested: function(action, values) { root.configRequested(action, values) }
             onEditorActiveChanged: root.rowEditingId = editorActive ? modelData.id : (root.rowEditingId === modelData.id ? "" : root.rowEditingId)
             onEditingFinished: root.editingFinished()
+            onSelectRequested: { list.currentIndex = index; root.selectedId = modelData.id }
             onOpenRequested: { list.currentIndex = index; root.selectedId = modelData.id; root.openRequested(modelData.url) }
             onExpandRequested: {
                 list.currentIndex = index

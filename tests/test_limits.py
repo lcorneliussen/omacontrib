@@ -449,6 +449,11 @@ class ProcessLimitTests(unittest.TestCase):
             fake_gh.write_text(f"#!{sys.executable}\nraise SystemExit(99)\n")
             second = subprocess.run(command, env=env, capture_output=True, timeout=10, check=True)
             self.assertEqual(second.stdout, first.stdout)
+            # --cached returns the cached contributions with no refresh, even while gh is failing.
+            cached = subprocess.run(command + ["--cached"], env=env, capture_output=True, timeout=10, check=True)
+            cached_result = json.loads(cached.stdout)
+            self.assertEqual(len(cached_result["prs"]), 3)
+            self.assertNotIn("authFingerprint", cached_result)
 
     def execute(self, code, request="{}", timeout=3):
         return h.bounded_process([sys.executable, "-c", code], request, timeout, dict(os.environ))
