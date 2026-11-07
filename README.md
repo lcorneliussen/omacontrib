@@ -199,7 +199,13 @@ python3 tests/check_ui.py
 python3 tests/check_box.py   # the real panel in an OmaBox desktop: moves, drag & drop, exclude, dismiss
 ```
 
-OmaContrib is derived from
-[GitHub PR Status](https://github.com/victorhsb/omarchy-github-pr-status), whose
-careful cache, pagination, resource-limit, and QML behavior remain covered by the
-inherited test suite. MIT licensed; see `LICENSE`.
+## Credits
+
+OmaContrib began as
+[GitHub PR Status](https://github.com/victorhsb/omarchy-github-pr-status) by
+torugo (victorhsb) — its careful cache, pagination, resource-limit, and QML
+behavior remain covered by the inherited test suite, and OmaContrib still tracks
+its upstream development — which was in turn inspired by
+[Jankees' GitHub Build Monitor](https://github.com/jankeesvw/omarchy-github-build-monitor).
+
+MIT licensed; see `LICENSE` for all copyright holders.
