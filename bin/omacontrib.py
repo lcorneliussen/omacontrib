@@ -378,22 +378,19 @@ def source_record(pr):
 # Access/visibility auto-buckets, shown as display groups. Membership is computed in group_for (not
 # stored on the group), so the group dicts stay within the strict settings schema. "inbox" (renamed
 # "Upstream" for display) stays the fallback: public contributions and anything unclassified.
-AUTO_GROUP_SPECS = (("private", "Private", True), ("maintained", "Maintained", False))
-AUTO_GROUP_PREDICATES = {
-    "maintained": lambda row: row.get("access") == "maintainer",
-    "private": lambda row: row.get("visibility") == "private" and row.get("access") != "maintainer",
-}
+AUTO_GROUP_SPECS = (("personal", "Personal", False), ("maintained", "Maintained", False))
+AUTO_GROUP_IDS = frozenset(gid for gid, _, _ in AUTO_GROUP_SPECS)
 AUTO_GROUP_NAMES = {name.lower() for _, name, _ in AUTO_GROUP_SPECS} | {"upstream"}
 
 
 def auto_groups(groups):
-    """Insert the access/visibility buckets after inbox, or return groups unchanged.
+    """Insert the ownership buckets (Personal, Maintained) after inbox, or return groups unchanged.
 
     Skips injection when the user already owns those ids or names, when inbox is not first, or when
     there is no room under MAX_GROUPS, so custom group setups always win. Idempotent.
     """
     if (not groups or groups[0]["id"] != "inbox" or len(groups) + len(AUTO_GROUP_SPECS) > MAX_GROUPS
-            or any(group["id"] in AUTO_GROUP_PREDICATES for group in groups)
+            or any(group["id"] in AUTO_GROUP_IDS for group in groups)
             or any(group["name"].lower() in AUTO_GROUP_NAMES for group in groups)):
         return groups
     upstream = dict(groups[0], name="Upstream" if groups[0]["name"] == "Active" else groups[0]["name"])
@@ -412,7 +409,7 @@ def contribution_groups(settings):
     ]
 
 
-def group_for(repository, url, groups, row=None):
+def group_for(repository, url, groups, row=None, login=None):
     repository_key = repository.lower()
     owner = repository.split("/", 1)[0].lower()
     for group in groups:
@@ -424,11 +421,13 @@ def group_for(repository, url, groups, row=None):
     for group in groups:
         if owner in group["owners"]:
             return group, "owner"
-    # No explicit rule: fall into an access/visibility bucket when one matches, else the inbox fallback.
+    # No explicit rule: sort into an ownership bucket, else the inbox (upstream) fallback.
+    # Personal = repos under your own account; Maintained = other repos you can merge (your orgs).
     if row is not None:
+        personal = bool(login) and owner == login.lower()
+        maintainer = row.get("access") == "maintainer"
         for group in groups:
-            predicate = AUTO_GROUP_PREDICATES.get(group["id"])
-            if predicate and predicate(row):
+            if (group["id"] == "personal" and personal) or (group["id"] == "maintained" and maintainer and not personal):
                 return group, "default"
     return groups[0], "default"
 
@@ -605,7 +604,7 @@ def discover_closed(api, login, groups=None):
     rows = [lifecycle_row("closed", pr, "Closed · not merged") for pr in nodes[:100]
             if pr and pr.get("state") == "CLOSED" and (pr.get("closedAt") or "")[:10] >= since]
     # Closed experiments in uncounted groups must not crowd out the ones that matter.
-    rows.sort(key=lambda row: not group_for(row["repository"], row["url"], groups, row)[0]["count"])
+    rows.sort(key=lambda row: not group_for(row["repository"], row["url"], groups, row, login)[0]["count"])
     return rows[:MAX_CLOSED]
 
 
@@ -631,7 +630,7 @@ def discover_issues(api, login, groups=None):
         row.update(review="Issue", discussion=integer(issue["comments"]["totalCount"]), closed=closed)
         rows.append(row)
     # Issues in uncounted groups must not crowd out the ones that matter; then open before closed.
-    rows.sort(key=lambda row: (not group_for(row["repository"], row["url"], groups)[0]["count"], row["closed"]))
+    rows.sort(key=lambda row: (not group_for(row["repository"], row["url"], groups, row, login)[0]["count"], row["closed"]))
     return rows[:MAX_ISSUES]
 
 
@@ -1085,7 +1084,7 @@ def snapshot(api, login, previous, exclusions=None):
             row["access"], row["visibility"] = source["access"], source["visibility"]
     visible, hidden = [], []
     for row in rows:
-        group, group_by = group_for(row["repository"], row["url"], groups, row)
+        group, group_by = group_for(row["repository"], row["url"], groups, row, login)
         row["group"] = group["id"]
         row["groupBy"] = group_by
         (visible if group["count"] else hidden).append(row)

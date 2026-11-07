@@ -112,11 +112,12 @@ class HelperTests(unittest.TestCase):
         group, scope = h.group_for("example/project", "https://github.com/example/project/pull/1", groups)
         self.assertEqual((group["id"], scope), ("later", "item"))
 
-    def test_auto_groups_injects_access_visibility_buckets(self):
+    def test_auto_groups_injects_ownership_buckets(self):
         groups = h.auto_groups(h.contribution_groups({}))
-        self.assertEqual([g["id"] for g in groups], ["inbox", "private", "maintained", "excluded"])
-        self.assertEqual(groups[0]["name"], "Upstream")
-        self.assertEqual([g["count"] for g in groups[:3]], [True, True, False])
+        self.assertEqual([g["id"] for g in groups], ["inbox", "personal", "maintained", "excluded"])
+        self.assertEqual([g["name"] for g in groups], ["Upstream", "Personal", "Maintained", "Excluded"])
+        # Only upstream (external contributions) counts toward the bar.
+        self.assertEqual([g["count"] for g in groups[:3]], [True, False, False])
         # Stays within the strict snapshot/settings schema, and is idempotent.
         h.Settings.validate({"schemaVersion": 2, "accounts": [], "groups": groups})
         self.assertEqual([g["id"] for g in h.auto_groups(groups)], [g["id"] for g in groups])
@@ -128,21 +129,26 @@ class HelperTests(unittest.TestCase):
         owned_name = [{"id": "inbox", "name": "Upstream", "count": True, "items": [], "repositories": [], "owners": []}]
         self.assertEqual(h.auto_groups(owned_name), owned_name)
 
-    def test_group_for_routes_by_access_then_visibility(self):
+    def test_group_for_routes_by_ownership(self):
         groups = h.auto_groups(h.contribution_groups({}))
 
-        def route(access, visibility):
-            row = {"access": access, "visibility": visibility}
-            return h.group_for("o/r", "https://github.com/o/r/pull/1", groups, row)[0]["id"]
-        self.assertEqual(route("contributor", "public"), "inbox")      # upstream fallback
-        self.assertEqual(route("contributor", "private"), "private")
-        self.assertEqual(route("maintainer", "public"), "maintained")
-        self.assertEqual(route("maintainer", "private"), "maintained")  # access wins over visibility
-        # row=None keeps the old fallback (no auto-routing); a manual rule overrides the auto bucket.
-        self.assertEqual(h.group_for("o/r", "https://github.com/o/r/pull/1", groups)[0]["id"], "inbox")
-        groups[-1]["repositories"] = ["o/r"]
-        row = {"access": "contributor", "visibility": "private"}
-        self.assertEqual(h.group_for("o/r", "https://github.com/o/r/pull/1", groups, row)[1], "repository")
+        def route(repository, access):
+            row = {"access": access}
+            return h.group_for(repository, "https://github.com/" + repository + "/pull/1",
+                               groups, row, login="alice")[0]["id"]
+        self.assertEqual(route("other/tool", "contributor"), "inbox")     # external -> upstream fallback
+        self.assertEqual(route("alice/project", "maintainer"), "personal")  # your own account
+        self.assertEqual(route("alice/project", "contributor"), "personal")  # ownership, not access
+        self.assertEqual(route("acme/service", "maintainer"), "maintained")  # org you can merge
+        # Without a login, personal cannot be determined, so an owned repo falls back to maintained.
+        row = {"access": "maintainer"}
+        self.assertEqual(h.group_for("alice/project", "https://github.com/alice/project/pull/1",
+                                     groups, row)[0]["id"], "maintained")
+        # A manual rule still overrides the automatic bucket; row=None keeps the plain fallback.
+        self.assertEqual(h.group_for("acme/service", "https://github.com/acme/service/pull/1", groups)[0]["id"], "inbox")
+        groups[-1]["repositories"] = ["acme/service"]
+        self.assertEqual(h.group_for("acme/service", "https://github.com/acme/service/pull/1",
+                                     groups, {"access": "maintainer"}, "alice")[1], "repository")
 
     def test_authored_pull_requests_include_personal_repositories(self):
         personal = pr("personal")

@@ -359,8 +359,8 @@ Item {
             }
             Rectangle { width: parent.width; height: 1; color: root.muted; opacity: 0.22 }
             Repeater {
-                // Access/visibility buckets (private, maintained) fill automatically; not manual targets.
-                model: root.groups.filter(function(group) { return ["private", "maintained"].indexOf(group.id) < 0 })
+                // Ownership buckets (personal, maintained) fill automatically; not manual targets.
+                model: root.groups.filter(function(group) { return ["personal", "maintained"].indexOf(group.id) < 0 })
                 Rectangle {
                     id: destination; required property var modelData
                     objectName: "destination-" + modelData.id

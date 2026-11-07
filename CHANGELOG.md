@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Replace the visibility-based **Private** group with an ownership-based
+  **Personal** group: repos under your own account go to Personal, other repos
+  you can merge (your organizations) to Maintained, and everything else stays
+  Upstream. Only Upstream counts toward the bar.
 - `install.py --enable` no longer moves the widget back to the right section when
   it is already enabled, so re-installing (including the auto-redeploy git hooks)
   keeps wherever you placed it on the bar.

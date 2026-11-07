@@ -19,12 +19,13 @@ It tracks:
   labels such as `needs-fixes`, `security-review-required`, `validated`,
   `approved-and-verified`, and `listed`.
 
-Out of the box, contributions sort themselves by your standing on each
-repository: **Upstream** for public repos you only contribute to, **Private**
-for private repos you do not maintain, and **Maintained** for repos you own or
-maintain (shown but not counted in the bar). Each row also carries this
-provenance read-only — a private tag, whether you maintain the repo, and, for a
-pull request opened from one of your forks, where its branch lives.
+Out of the box, contributions sort themselves by whose repository it is:
+**Upstream** for repos you only contribute to, **Personal** for repos under your
+own account, and **Maintained** for other repos you can merge (your
+organizations). Only Upstream — your external contributions — counts toward the
+bar; Personal and Maintained are shown but not counted. Each row also carries
+this provenance read-only — a private tag, whether you maintain the repo, and,
+for a pull request opened from one of your forks, where its branch lives.
 
 You can still organize contributions into named groups using individual item,
 repository, or owner rules, which take precedence over the automatic buckets.

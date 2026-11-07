@@ -31,7 +31,7 @@ Item {
     readonly property var visibleRows: allRows.filter(function(row) { return (row.group || "inbox") === pane })
     // Access/visibility buckets are filled automatically (see group_for in the helper); they are not
     // manual move/drop targets and cannot be renamed, deleted, or toggled. Keep in sync with AUTO_GROUP_SPECS.
-    readonly property var autoGroupIds: ["private", "maintained"]
+    readonly property var autoGroupIds: ["personal", "maintained"]
     function isAuto(id) { return root.autoGroupIds.indexOf(id) >= 0 }
     readonly property var currentGroup: (snapshot.groups || []).find(function(group) { return group.id === pane }) || ({ id: "inbox", name: "Active", count: true })
     signal openRequested(string url)
