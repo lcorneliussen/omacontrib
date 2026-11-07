@@ -1025,6 +1025,7 @@ def snapshot(api, login, previous, exclusions=None):
                     stopped = exc
                 row = copy.deepcopy(old.get(source["id"], basic_row(source)))
                 row.update({key: value for key, value in basic_row(source).items() if key in {"title", "draft", "updatedAt", "url"}})
+                apply_provenance(row, source)  # cheap search data groups the row even when detail failed
                 row["error"] = str(exc) if isinstance(exc, FetchError) else "Incomplete GitHub response."
                 rows.append(row)
                 errors.append(row["error"])
@@ -1033,6 +1034,7 @@ def snapshot(api, login, previous, exclusions=None):
             # Stop requesting after a rate limit; retain explicit unknown/stale rows for the remainder.
             for source in to_fetch[start + 20:]:
                 row = copy.deepcopy(old.get(source["id"], basic_row(source)))
+                apply_provenance(row, source)
                 row["error"] = "Refresh paused: GitHub rate limit reached."
                 rows.append(row)
             break
@@ -1072,6 +1074,15 @@ def snapshot(api, login, previous, exclusions=None):
     error = "Some contribution details are unavailable. " + errors[0] if errors else ""
     if truncated:
         error = truncated + " " + error
+    # Lifecycle rows (merged/closed) copied from an older cache can lack provenance; backfill repo-level
+    # access/visibility from this refresh's search data so they group by the repository, not as upstream.
+    search_provenance = {}
+    for source in discovered:
+        search_provenance.setdefault(source["repository"]["nameWithOwner"].lower(), source)
+    for row in rows:
+        source = search_provenance.get(row["repository"].lower())
+        if source and ("access" not in row or "visibility" not in row):
+            row["access"], row["visibility"] = source["access"], source["visibility"]
     visible, hidden = [], []
     for row in rows:
         group, group_by = group_for(row["repository"], row["url"], groups, row)

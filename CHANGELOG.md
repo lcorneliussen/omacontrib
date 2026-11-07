@@ -1,5 +1,13 @@
 # Changelog
 
+## OmaContrib 0.2.1 — 2026-11-07
+
+- Fix repositories you own or maintain appearing under **Upstream** instead of
+  **Maintained**. Merged and closed rows copied from an older cache, and rows
+  whose detail fetch failed or was rate-limited, now get their access and
+  visibility backfilled from the current search data, so they group by the
+  repository rather than defaulting to upstream.
+
 ## OmaContrib 0.2.0 — 2026-11-07
 
 - Faster mouse-wheel scrolling in the list (260 px per notch), merged from

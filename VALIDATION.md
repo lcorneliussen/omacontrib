@@ -1,5 +1,19 @@
 # Validation
 
+## Release 0.2.1 (2026-11-07)
+
+- Fixes owned/maintained repositories grouping as Upstream. The cause was rows
+  without derived provenance: merged/closed rows copied from a pre-0.2.0 cache
+  on a skipped lifecycle refresh, and error/rate-limited fallback rows. Access
+  and visibility are now backfilled from the refresh's search data before
+  grouping, and applied on the fallback paths too.
+- Verified live against the real account: a forced refresh moved from 42 rows
+  with no access level (shown as Upstream) to 0 — `lcorneliussen/jenda`,
+  `omaego` and the other owned/admin repositories now group as Maintained, the
+  genuinely external public contributions stay Upstream.
+- Full Python suite (109 tests, including new regressions for fallback and
+  lifecycle-copy provenance) and plugin validation pass. No QML changed.
+
 ## Release 0.2.0 (2026-11-07)
 
 - Release adds automatic access/visibility grouping (Upstream / Private /

@@ -561,6 +561,34 @@ class DetailBudgetTests(unittest.TestCase):
             h.snapshot(api, "alice", copy.deepcopy(previous))
         self.assertIn("4", api.fetched_ids())
 
+    def test_detail_failure_still_groups_by_search_provenance(self):
+        source = pr("x")
+        source["repository"].update(viewerPermission="ADMIN", isPrivate=True)
+        # A pre-provenance cache row forced to re-fetch; the detail call then returns nothing.
+        stale = h.normalize(ScriptedAPI(), pr("x"))
+        stale["error"] = "stale"
+        stale.pop("access", None)
+        stale.pop("visibility", None)
+        api = self.DetailAPI([source])
+        api.by_id = {}  # DETAILS yields no node, so the row falls back to the cached copy
+        result = h.snapshot(api, "alice", {"prs": [stale], "lifecycleCheckedAt": time.time()})
+        row = next(r for r in result["prs"] + result["excluded"] if r["id"] == "x")
+        self.assertTrue(row["error"])  # detail genuinely failed
+        self.assertEqual((row["access"], row["visibility"], row["group"]),
+                         ("maintainer", "private", "maintained"))  # yet still grouped from search
+
+    def test_lifecycle_rows_backfill_provenance_from_search(self):
+        open_pr = pr("o1")
+        open_pr["repository"]["nameWithOwner"] = "me/app"
+        open_pr["repository"].update(viewerPermission="ADMIN", isPrivate=False)
+        cached = h.lifecycle_row("merged", dict(pr("m1"), repository={"nameWithOwner": "me/app"}), "Merged")
+        cached.pop("access"), cached.pop("visibility")  # a merged row cached before provenance existed
+        # Recent lifecycle timestamp: merged rows are copied from cache, not re-discovered.
+        previous = {"prs": [cached], "lifecycleCheckedAt": time.time()}
+        result = h.snapshot(self.DetailAPI([open_pr]), "alice", previous)
+        merged = next(r for r in result["prs"] + result["excluded"] if r["id"] == cached["id"])
+        self.assertEqual((merged["access"], merged["group"]), ("maintainer", "maintained"))
+
 
 if __name__ == "__main__":
     unittest.main()
